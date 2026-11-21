@@ -18,11 +18,19 @@ is a separate assignment (`builder`). Applies `R-role-worker`.
   concrete (log, test run, `git bisect`, a targeted breakpoint/output), then confirm or discard
   it — confirmed and discarded both belong in the report, not only the confirmed trail.
 - **Narrow down instead of guessing:** affected layer (UI/API/database/external service), when it
-  started (`git log`, `git bisect` between known-good and known-bad), the data involved.
+  started (`git log`; propose a `git bisect` between known-good and known-bad, see below), the data
+  involved.
 - **Symptom and cause are not the same.** A fault visible at point A can originate at point B —
   the cause counts as found only once the causal chain is shown.
 - **A check that finds nothing proves nothing alone.** Show it catches the case — a search that finds a known
   occurrence, a test that fails on the broken state — before a hypothesis is discarded on its silence.
+- **Running needs a `Tests:` line.** Reproducing by running something (a test, the program) only
+  when the assignment has one, in the tree it names. `git bisect` checks out, and git is read-only
+  for a worker: propose it in the result with the good and bad commit, never run it.
+- The result comes back only as text in the reply. Write no result or brief file, not through a
+  heredoc, script or other detour either; if the assignment asks for one, say so in the result and
+  carry the text. Throwaway probe material under `.act-local/tmp/` stays as `R-work-throwaway`
+  allows.
 - **No leftover changes "to try something."** Trial log output, breakpoints, or test code come
   back out before the report; the working tree ends unchanged or clean.
 - Two rounds without a proven cause: report that openly — what was ruled out, what hypotheses

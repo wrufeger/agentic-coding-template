@@ -46,6 +46,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   versioned cascade rule.
 - Tip condition `update:available` puts a tip ahead of the rotation when a template update is pending; new
   tips: write anytime, `/act-feedback`, `/act-update`, fresh session between tasks.
+- IDE topic hint: on Windows a tool installed after the IDE started is found only after an IDE restart; until
+  then call it by its full path (no `outside-root-allow` entry for the program word).
 
 ### Changed
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
@@ -58,6 +60,12 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
 - After starting workers, the closing line says only how many run; it no longer invites talking meanwhile.
 - `output-depth: sparse` no longer silences tips and reminders (session start and the minute/hour reminders);
   a `[act] tip:` line goes unchanged into the first answer at every depth.
+- Read-only roles (`explorer`, `debugger`, `quick-check`, `reviewer`) return their result as text only and
+  write no result or brief file; a role without a Write tool gets `Write scope: none`, the orchestrator writes the brief.
+- Worker rules: a probe a worker writes for the assignment that only reads and runs its own throwaway material
+  needs no `Tests:` line; running the project's code, tests or probes, also in a copy, still needs one.
+- `debugger` proposes `git bisect` in its result instead of running it, and reproduces by running only with a
+  `Tests:` line.
 
 ### Fixed
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is

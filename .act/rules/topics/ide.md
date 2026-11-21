@@ -31,5 +31,10 @@ Tool names as of the JetBrains MCP server checked 2026-09-26:
   are built around those. The `ide-mcp` check (`docs/ai/config.md` § Checks) still covers the IDE
   tools, but only as far as their arguments can be evaluated.
 - Writing to a database only with approval (`R-safe-approval`) — reading is free.
+- **A tool installed after the IDE started** (Windows) is found only after the IDE is restarted: the
+  assistant inherits the IDE's environment, so restarting only the assistant does not refresh `PATH`.
+  Until then call the tool by its full path. The program word of a command needs no `outside-root-allow`
+  entry; a `cd` into the folder, a path argument or a wrapper around the program (`xvfb-run`, `bash -c`)
+  does, only on the owner's word (`R-safe-outside-root`).
 - The IDE is not always running: if the server does not answer, fall back to the standard tools;
   do not wait for it.

@@ -17,6 +17,10 @@ ALLOW/BLOCK on a flagged tool call. Applies `R-role-worker`.
   not a bug (`docs/project/coding_rules.md`).
 - A "no problem found" from a check counts only once that check is shown to catch the case (a test that fails on
   the old state, a search that finds a known one); otherwise say it is unproven.
+- The result comes back only as text in the reply. Write no result or brief file, not through a
+  heredoc, script or other detour either; if the assignment asks for one, say so in the result and
+  carry the text. Throwaway probe material under `.act-local/tmp/` stays as `R-work-throwaway`
+  allows.
 - Second axis, kept separate: **task fidelity** — was the assignment or concept built, not more,
   not less.
 - List every new or changed user-visible text, restriction or refusal and hidden element with its origin (task file,

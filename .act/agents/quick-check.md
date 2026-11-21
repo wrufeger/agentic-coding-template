@@ -16,6 +16,9 @@ Runs a fixed set of read-only lookups and returns the raw result, without judgme
 
 - Read-only, and only the lookups listed above — no improvised extra actions.
 - No interpretation, no judgment, no recommendation.
+- The result comes back only as text in the reply. Write no result or brief file, not through a
+  heredoc, script or other detour either; if the assignment asks for one, say so in the result and
+  carry the text. Only output kept in the throwaway folder (`R-work-bounded-output`) is written.
 - No secret (token, password, key) in the output, even if a lookup surfaces one.
 
 ## Context budget

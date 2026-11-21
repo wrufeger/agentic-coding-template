@@ -100,7 +100,9 @@ facts: done, open, unexpected. Git is read-only (reading commands such as `statu
 stays with the orchestrator. Git in another folder runs only as `git -C <literal path> <command>` in a
 call of its own: never after `cd`, never with a variable in the path; before such a call read what
 `cd-git` allows in `.act/rules/topics/checks.md`. Tests and probes run only when the assignment has a
-`Tests:` line, and in the tree it names. A file outside the assignment's
+`Tests:` line, and in the tree it names. A probe the worker writes for the assignment that reads and runs
+only its own throwaway material needs no `Tests:` line; running or importing the project's code, or the
+project's tests or probes, also in a copy, needs one naming that tree. A file outside the assignment's
 `Write scope:` (the throwaway place `.act-local/tmp/` aside) is never written — not with the tool a check would refuse, and not through an
 interpreter, script or other detour, whether or not a check refused it; the result names the file and
 the change it needs. Any other write a check refused is not made another way either, not through a

@@ -19,9 +19,10 @@ The template's roles come before the tool's own agents (`Explore`, `general-purp
 `claude-code-guide` stays for the tool itself).
 
 **Assignment header.** Mandatory, each at the start of a line (only `Cap:` may also follow a `·`/`|`/`;`/`,`):
-`Write scope: <glob>[, <glob> ...]` (relative to the project root; `none` = read-only; throwaway
-material under `.act-local/tmp/` is free for every worker), `Cap: <n>` (tool calls; a note at the cap,
-refusal from 1.5×) and, where something runs, `Tests: <glob>[, <glob> ...]` (the tree it reads).
+`Write scope: <glob>[, <glob> ...]` (relative to the project root; `none` = read-only, and the only
+value for a role without a Write tool, which returns its result as text — a brief file is written by
+the orchestrator; throwaway material under `.act-local/tmp/` is free for every worker), `Cap: <n>`
+(tool calls; a note at the cap, refusal from 1.5×) and, where something runs, `Tests: <glob>[, <glob> ...]` (the tree it reads).
 Checked mechanically by `worker-write-scope`, `worker-cap` and `worker-scope-overlap`. The tier follows
 from the role; a `Tier:` line names a deviation only; more reasoning:
 `builder-high`/`reviewer-high`. The estimate (`~<n> min · ~<n> tkn fresh · ~<n> tkn cache`, wall-clock
