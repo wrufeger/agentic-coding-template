@@ -56,7 +56,8 @@ Markdown file under `docs/` links.
 
 ## `question` entries
 
-One question per file — a part with options of its own becomes a question of its own.
+One question per file; decisions that belong together may stand in it as numbered parts (see below),
+any other decision is a question of its own.
 `entries.py new question <title>` writes the header and the heading and ends the file with an empty
 answer label, `**Answer:**` (`**Antwort:**` when `language-docs` is `de`). The question goes between
 the heading and that label, which stays the last line:
@@ -66,7 +67,7 @@ the heading and that label, which stays the last line:
 
 A HINT OF AT MOST THREE SENTENCES, NO LIST: WHAT IS TO BE DECIDED, WHY NOW, WHERE THE BACKGROUND IS
 
-- **a)** **Recommended:** OPTION — CONSEQUENCE, EFFORT. REASON
+- **a)** (Recommended) OPTION — CONSEQUENCE, EFFORT. REASON
 
 - **b)** OPTION — CONSEQUENCE, EFFORT
 
@@ -77,12 +78,21 @@ A HINT OF AT MOST THREE SENTENCES, NO LIST: WHAT IS TO BE DECIDED, WHY NOW, WHER
 
 The heading is the question itself, so the title alone says what is asked. The hint below it stays
 short — at most three sentences, no list; background and reasons go into the concept or backlog entry
-the hint names, not into the question. Two to five options, one or two lines each with the effort.
-A recommended option is always the first, a), and opens with the bold label `**Recommended:**`
-(`**Empfehlung:**` when `language-docs` is `de`), so the reader sees it first; its reason closes the
-line in one sentence. A blank line before, between and after the options keeps the
-file readable in an editor and a Markdown preview, not only in a tool that renders it as a form. A
-question without sensible options stays free text: the hint, then the answer label.
+the hint names, not into the question. Two to five options, one or two lines each with the effort,
+plus the bullets of the points it covers.
+A recommended option is always the first, a), marked `(Recommended)` right after the letter
+(`(Empfehlung)` when `language-docs` is `de`), so the reader sees it first; its reason closes the
+line in one sentence. There is no separate line above the options naming the recommendation. A
+blank line before, between and after the options keeps the file readable in an editor and a Markdown
+preview, not only in a tool that renders it as a form. A question without sensible options stays
+free text: the hint, then the answer label.
+
+A question can be answered without reading anything else: what an option decides is in the option
+itself. When it covers several points, it names each of them as a bullet below it, never only numbers
+or names from a concept, a backlog entry or an earlier question.
+
+Decisions that belong together may stand as numbered parts in one file: per part a bold line
+`**1. PART**`, its options below it in the form above. The answer then reads `Q<n> 1a 2b`.
 
 Options are always lines `- **a)** …`, never a numbered list: the answer then reads `Q<n> a`, and a
 tool that shows the question elsewhere (a web form, say) can offer the letters as choices. Other

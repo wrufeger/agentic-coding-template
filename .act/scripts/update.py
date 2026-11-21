@@ -2813,7 +2813,7 @@ def _report_copilot_files_without_model(root: Path, new_init) -> Optional[Path]:
             "`models:` line. They are treated as your own files: an update never changes them, and the role runs "
             "on the model of the session. The lines the template would set for each one:\n\n"
             + "\n".join(blocks) + "\n"
-            "- **a)** **Recommended:** Add these lines to each file by hand, inside the frontmatter. Every later "
+            "- **a)** (Recommended) Add these lines to each file by hand, inside the frontmatter. Every later "
             "update then keeps them current from the tier table and the Copilot column of § Roles in "
             "`docs/ai/config.md`. One edit per file.\n\n"
             "- **b)** Leave the files as they are. The role runs on the model of the session; a later update "

@@ -2598,7 +2598,7 @@ def tier_report_text(store: dict, role: str, tier: str, language: str) -> tuple[
 def tier_question_text(store: dict, role: str, tier: str, language: str, report_name: str) -> tuple[str, str]:
     """(title, body) of the inbox question for the proposal to raise `role` at `tier`. The hint is
     two sentences and names the report `report_name`, which holds the numbers (tier_report_text).
-    The recommended option comes first, as a), opening with the bold label."""
+    The recommended option comes first, as a), marked `(Recommended)` right after the letter."""
     def loc(en: str, de: str) -> str:
         return actlib.localized(language, en, de)
 
@@ -2629,10 +2629,10 @@ def tier_question_text(store: dict, role: str, tier: str, language: str, report_
                "in diesem Eingang.")
     lines = [
         hint, "",
-        "- **a)** " + loc("**Recommended:** Look at the cases first: check the journal and transcripts of the reworked "
+        "- **a)** " + loc("(Recommended) Look at the cases first: check the journal and transcripts of the reworked "
                           "and escalated runs for the cause, then decide. Effort: about 15 minutes of reading. The "
                           "numbers alone do not show whether a higher tier helps.",
-                          "**Empfehlung:** Erst die Fälle ansehen: Journal und Transkripte der nachgearbeiteten und "
+                          "(Empfehlung) Erst die Fälle ansehen: Journal und Transkripte der nachgearbeiteten und "
                           "eskalierten Läufe auf die Ursache prüfen, dann entscheiden. Aufwand: etwa 15 Minuten "
                           "Lesen. Die Zahlen allein zeigen nicht, ob eine höhere Stufe hilft."),
         "",
@@ -2844,10 +2844,10 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
             report_de = "eine Meldung an die Vorlage mit den obigen Zahlen (`act-feedback`)"
         covered = [
             hint, "",
-            "- **a)** " + loc(f"**Recommended:** Report: file {report_en}. The template's role file of `{top}` already "
+            "- **a)** " + loc(f"(Recommended) Report: file {report_en}. The template's role file of `{top}` already "
                               f"says this sentence, so a local line would only repeat it; the workers still ran into "
                               "the check, which is worth knowing upstream. Effort: one report, a few minutes.",
-                              f"**Empfehlung:** Melden: {report_de} anlegen. Die Rollendatei der Vorlage für `{top}` sagt "
+                              f"(Empfehlung) Melden: {report_de} anlegen. Die Rollendatei der Vorlage für `{top}` sagt "
                               "diesen Satz schon, eine lokale Zeile würde ihn nur wiederholen; die Worker sind trotzdem "
                               "in die Prüfung gelaufen, das ist für die Vorlage wissenswert. Aufwand: eine Meldung, "
                               "ein paar Minuten."),
@@ -2870,9 +2870,9 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
         return title, "\n".join(covered) + "\n"
     lines = [
         hint, "",
-        "- **a)** " + loc(f"**Recommended:** Adopt: put this sentence {where_en}: \"{line}\" "
+        "- **a)** " + loc(f"(Recommended) Adopt: put this sentence {where_en}: \"{line}\" "
                           "Effort: one line, a few minutes.",
-                          f"**Empfehlung:** Übernehmen: diesen Satz {where_de}: \"{line}\" "
+                          f"(Empfehlung) Übernehmen: diesen Satz {where_de}: \"{line}\" "
                           "Aufwand: eine Zeile, ein paar Minuten."),
         "",
         "- **b)** " + loc("Reword: say in the answer how the sentence should read or where it belongs. Effort: one "

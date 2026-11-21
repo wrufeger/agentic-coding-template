@@ -43,6 +43,9 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   admitted even with `packages-unverified: block`.
 
 ### Changed
+- An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
+  in bold; it is answerable without other files, and related decisions may be numbered parts in one file,
+  answered `1a 2b`.
 - `protected-watch` also watches the package record in `.act-lock.json`; package copies pass only on the
   orchestrator's calls and only when they equal what the active packages give.
 - `R-safe-foreign-text`: the `install.md` of a package you said yes to counts as your instruction for that
