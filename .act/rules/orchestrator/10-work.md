@@ -4,11 +4,13 @@ summary: recording, process errors, restarts, concept-first, config.md, handover
 
 ## `R-work-record-now` — Write immediately, not at session end
 
-summary: journal, task status, and inbox entries updated right after each step
+summary: journal, task status, and inbox entries updated right after each step; open entries a booking, commit or finished task touches updated in the same step
 
 Journal, task status, and new questions go to their place right after the step that produced them,
 while the evidence is still fresh — not reconstructed from memory later. Where a question or open
-decision goes: `R-human-ask`.
+decision goes: `R-human-ask`. When an answer is booked, a commit made or a task finished, the open
+entries it touches (a report, question, todo or backlog item that names it or rests on it) are brought
+up to date in the same step: corrected, or archived once covered.
 
 ## `R-work-process-error` — A process error is reported and fixed the first time
 

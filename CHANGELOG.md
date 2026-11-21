@@ -48,6 +48,10 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   tips: write anytime, `/act-feedback`, `/act-update`, fresh session between tasks.
 - IDE topic hint: on Windows a tool installed after the IDE started is found only after an IDE restart; until
   then call it by its full path (no `outside-root-allow` entry for the program word).
+- `doctor.py --inbox` asks one question per group of findings with a choice (own-rules size, long project
+  docs, docs order); the report names it, and a later run rewrites the report in place unless someone edited it.
+- New `act-doctor` check `inbox-stale` with config key `inbox-stale` in § Inbox (days, default 14, `off` or
+  `0`): open inbox entries naming a done or archived task, backlog item or question, and open reports past the limit.
 
 ### Changed
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
@@ -66,6 +70,11 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   needs no `Tests:` line; running the project's code, tests or probes, also in a copy, still needs one.
 - `debugger` proposes `git bisect` in its result instead of running it, and reproduces by running only with a
   `Tests:` line.
+- A refusal question notices when the role bridge, the own rules or a loaded rule file already carries its
+  sentence: it then offers a report to the template, names the file and counts only blocks from the day after
+  that file's last commit.
+- `R-work-record-now` asks to bring the open entries a booked answer, a commit or a finished task touches up to
+  date in the same step.
 
 ### Fixed
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is

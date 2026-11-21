@@ -474,9 +474,10 @@ options:
   -h, --help    show this help message and exit
   --target DIR  check this project instead of the current checkout
   --json        machine-readable output
-  --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings,
-                and one inbox question per new tier proposal and per check that refused workers
-                often
+  --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings (a
+                later run rewrites the newest open one in place), and one inbox question per new
+                tier proposal, per check that refused workers often and per group of findings with
+                a choice
   --accept ID   accept the current template text for ID, a rule id or skill:<name> (repeatable)
   --accept-all  accept the current template text for every stale override/off
 ```

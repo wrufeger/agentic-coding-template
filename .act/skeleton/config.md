@@ -123,6 +123,7 @@ committed boards. Empty means `on` with `mode: team`, `off` otherwise.
 | :--- | :--- |
 | `inbox-decisions` | immediate |
 | `quick-capture` | on |
+| `inbox-stale` | 14 |
 
 `immediate` (default) \| `at-start`. `immediate`: every open decision, and every step only a person
 can take and can take now, goes into `docs/ai/inbox/` as soon as it is booked, so the inbox always
@@ -136,6 +137,11 @@ reaches the model — `todo:` and `note:` as inbox entries marked `triage: open`
 whom a todo is for, or answers the note), `idea:` as a new section in your `ideas-<identity>.md`
 (`R-human-capture`). `off`: the prefixes mean nothing special. If a message that starts with one of
 the words was meant as an assignment, delete the file the hook names and send it again without the prefix.
+
+`inbox-stale`: a number of days, `off` or `0` (default `14`). `act-doctor` only, never refuses: it names an
+open inbox entry whose heading or header names a task, backlog item or question that is archived or has
+`status: done`, and an open report (`kind: report`) older than this many days (counted from `updated:` when it
+has one, else `created:`), each with a hint on what to do; `off` or `0` skips both.
 
 ## Output depth
 

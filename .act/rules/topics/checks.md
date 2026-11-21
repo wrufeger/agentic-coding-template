@@ -44,7 +44,11 @@ role's bridge (`.claude/agents/<role>.md`, which an update never replaces; a `<r
 calls for is removed with a backup; a file `docs/ai/local/agents/<role>.md` with a template role's name is not read,
 it is the place of an own role) or the assignment header that tells the worker beforehand what the check does not allow, with the options adopt,
 reword, do nothing. The sentence follows the most frequent class of the window where one is listed below as
-`<check> (<class>)`, else it is the check's own; a check without one gets a generic sentence.
+`<check> (<class>)`, else it is the check's own; a check without one gets a generic sentence. When a file the worker
+reads already carries that sentence (the role's bridge, `docs/ai/rules.md`, `docs/project/coding_rules.md` or a rule file
+the workers load; compared without backticks, emphasis and line breaks), the options become report to the template,
+adopt anyway, reword, do nothing, the question names those files, and only the blocks after the last commit of the
+carrying file (without a commit, its modification date) count, from the day after it.
 The sentences are these:
 
 - `write_guard`: Never write under `.act/` of this project (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`. In a throwaway copy under `.act-local/tmp/`, show the place in the command: the path written out, or a variable set once to a literal before its first use; `cd` only to a folder written out.

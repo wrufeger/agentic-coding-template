@@ -1209,6 +1209,7 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("docs-order", "Checks", values=_MODE3, default="warn")
     add("changelog-length", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("own-rules-budget", "Checks", values=("off",), pattern=r"\d+", default="6000")
+    add("inbox-stale", "Inbox", values=("off",), pattern=r"\d+", default="14")
     add("own-rules-review", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("logging", "Logging", values=_ON_OFF, default="off")
     add("log-level", "Logging", values=("DEBUG", "INFO", "WARN", "ERROR"), default="INFO")

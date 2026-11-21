@@ -129,6 +129,11 @@
 #          29. a tool copy of a project's own skill (docs/ai/local/skills/) that differs from both its
 #               source and its recorded hash — edited by hand, so neither the session start nor an
 #               update refreshes it (own-copy-drift; a template skill's override copy reads "skill copy").
+#          30. an open inbox entry that is stale (inbox-stale): its heading or header names a task, backlog
+#               or question id that is archived (any file under docs/ai/work/archive/, monthly files
+#               included) or has `status: done`; or it is a `kind: report` older than `inbox-stale` days
+#               (docs/ai/config.md § Inbox, default 14, `off` or `0` skips both parts), counted from
+#               its `updated:` field when it has one, else `created:`. A hint only, never a block.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -141,8 +146,13 @@
 #   python .act/scripts/doctor.py --json            # same, as one JSON object on stdout
 #   python .act/scripts/doctor.py --inbox            # also write a report-<YYYYMMDD-HHMM>-doctor.md entry
 #                                                     # under docs/ai/inbox/, if there are findings
-#                                                     # (a second run with the same findings updates
-#                                                     # that same entry instead of adding another),
+#                                                     # (a later run rewrites the newest report that is
+#                                                     # still open in place, `created:` kept and
+#                                                     # `updated:` set, instead of adding another),
+#                                                     # one question per group of findings with a choice
+#                                                     # (own-rules-size, docs-file-long, the other
+#                                                     # docs-order kinds), named by the report instead of
+#                                                     # those findings,
 #                                                     # and one question per new tier proposal (16),
 #                                                     # not part of the report, and one question per
 #                                                     # check that refused workers at least 3 times in
@@ -176,7 +186,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -268,6 +278,7 @@ KIND_LABELS: dict[str, str] = {
     "changelog-length": "Changelog entries under [Unreleased] over the length limit (changelog-length)",
     "reasoning-none": "Project files that still carry the reasoning value `none` (read as `default`)",
     "answered-edited": "Answered questions whose text or answer changed since the last commit",
+    "inbox-stale": "Open inbox entries that name a done or archived entry, and open reports past their age limit (inbox-stale)",
     "package-settings": "Package settings blocks in docs/ai/config.md whose package has no entry in the lock",
     "package-broken": "Packages in the lock that do not load (folder missing or different from the lock)",
     "package-version": "Packages that need a newer template than the installed one",
@@ -325,6 +336,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "changelog-length": "Changelog-Einträge unter [Unreleased] über der Längengrenze (changelog-length)",
     "reasoning-none": "Projektdateien, die noch den Reasoning-Wert `none` tragen (gelesen als `default`)",
     "answered-edited": "Beantwortete Fragen, deren Text oder Antwort sich seit dem letzten Commit geändert hat",
+    "inbox-stale": "Offene Inbox-Einträge, die einen erledigten oder archivierten Eintrag nennen, und offene Berichte über der Altersgrenze (inbox-stale)",
     "package-settings": "Einstellungsblöcke eines Pakets in docs/ai/config.md, das keinen Lock-Eintrag hat",
     "package-broken": "Pakete im Lock, die nicht laden (Ordner fehlt oder weicht vom Lock ab)",
     "package-version": "Pakete, die eine neuere Vorlage brauchen als die installierte",
@@ -2768,18 +2780,137 @@ def _refusal_question_open(root: Path, check: str) -> bool:
     return False
 
 
-def _new_refusal_proposals(root: Path) -> list[tuple[str, dict[str, int]]]:
-    """(check, {worker role: refusals}) for each check that refused workers at least _REFUSAL_THRESHOLD times in
-    the window and has no open question and none filed within the window. The main session's refusals are not
-    counted: they are the human's own work."""
+def _normalise_sentence(text: str) -> str:
+    """`text` without backticks and `*`, whitespace collapsed, lower case: the form two texts are compared in, so a
+    sentence carried with other emphasis or on wrapped lines still counts as the same."""
+    return " ".join(text.replace("`", "").replace("*", "").split()).lower()
+
+
+def _file_changed_on(root: Path, path: Path) -> Optional[date]:
+    """The day the file last changed: its last commit (`git log -1 --format=%cI`); with an uncommitted edit
+    (`git status --porcelain` names it) the later of that day and the day of its mtime; without git or without a
+    commit for it the day of its mtime; None when it cannot be told."""
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        rel = ""
+    try:
+        mtime_day: Optional[date] = datetime.fromtimestamp(path.stat().st_mtime).date()
+    except OSError:
+        mtime_day = None
+    if rel:
+        out = _git_out(root, "log", "-1", "--format=%cI", "--", rel)
+        if out and out.strip():
+            try:
+                committed = date.fromisoformat(out.strip()[:10])
+            except ValueError:
+                return mtime_day
+            dirty = _git_out(root, "status", "--porcelain", "--", rel)
+            if dirty and dirty.strip() and mtime_day is not None:
+                return max(committed, mtime_day)
+            return committed
+    return mtime_day
+
+
+def _shown_path(root: Path, path: Path) -> str:
+    """`path` as the question names it: relative to the project, else relative to the home folder (`~/...`)."""
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        try:
+            return "~/" + path.resolve().relative_to(Path.home().resolve()).as_posix()
+        except (OSError, ValueError):
+            return path.as_posix()
+
+
+def _carrying_files(root: Path, sentence: str, roles: list[str]) -> dict[str, list[Path]]:
+    """role -> the files that carry `sentence` for it (normalised containment): the role's own bridge
+    `.claude/agents/<role>.md` (and the base role's, for a `<role>-high`), the own rules `docs/ai/rules.md` and
+    `docs/project/coding_rules.md`, and every rule file the workers load (rules.claude_md_files). A role no file
+    carries it for is left out."""
+    needle = _normalise_sentence(sentence)
+
+    def carries(path: Path) -> bool:
+        try:
+            return needle in _normalise_sentence(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            return False
+
+    shared: list[Path] = [root / "docs" / "ai" / "rules.md", root / "docs" / "project" / "coding_rules.md"]
+    try:
+        shared += [path for _label, path in rules.claude_md_files(root, Path.home(), True)]
+    except Exception:  # noqa: BLE001 -- an unreadable import chain: the own rules files alone
+        pass
+    seen: set[Path] = set()
+    shared_carriers: list[Path] = []
+    for path in shared:
+        try:
+            key = path.resolve()
+        except OSError:
+            continue
+        if key not in seen and path.is_file():
+            seen.add(key)
+            if carries(path):
+                shared_carriers.append(path)
+    found: dict[str, list[Path]] = {}
+    for role in roles:
+        base = role[:-len("-high")] if role.endswith("-high") else role
+        bridges = [root / ".claude" / "agents" / f"{name}.md" for name in dict.fromkeys((role, base))]
+        own = [path for path in bridges if path.is_file() and carries(path)]
+        files = list(dict.fromkeys(shared_carriers + own))
+        if files:
+            found[role] = files
+    return found
+
+
+def _refusals_by_day(root: Path, check: str) -> dict[str, dict[str, int]]:
+    """day (YYYY-MM-DD) -> {role: refusals} of `check` within the window, from the store with the pending events
+    folded in; empty without usage.py or counts."""
+    try:
+        import usage
+        store = usage.consolidate(root)
+    except Exception:  # noqa: BLE001 -- no counts, no question
+        return {}
+    first = (date.today() - timedelta(days=_REFUSAL_WINDOW_DAYS - 1)).isoformat()
+    entry = (store.get("checks") or {}).get(check)
+    days = (entry.get("refusals") if isinstance(entry, dict) else None) or {}
+    return {day: roles for day, roles in days.items()
+            if isinstance(day, str) and day >= first and isinstance(roles, dict)}
+
+
+@dataclass
+class RefusalProposal:
+    check: str
+    workers: dict[str, int]  # role -> refusals counted for the question
+    sentence: str            # the sentence the question proposes
+    carried: dict[str, list[Path]] = field(default_factory=dict)  # role -> files that carry the sentence already
+
+
+def _refusal_sentence(check: str, classes: dict[str, int], lines: dict[str, str]) -> str:
+    """The sentence a question about `check` proposes: that of the most frequent refusal class, else the check's
+    own, else a generic one."""
+    top_class = sorted(classes.items(), key=lambda item: (-item[1], item[0]))[0][0] if classes else ""
+    return (lines.get(f"{check}:{top_class}") or lines.get(check)
+            or f"Before a call that `{check}` may refuse, read what it allows in `.act/rules/topics/checks.md`; "
+               "a refusal is not retried another way.")
+
+
+def _new_refusal_proposals(root: Path) -> list[RefusalProposal]:
+    """One proposal for each check that refused workers at least _REFUSAL_THRESHOLD times in the window and has no
+    open question and none filed within the window. The main session's refusals are not counted: they are the
+    human's own work. When the sentence the question would propose is carried already (_carrying_files) and the top
+    role is not one the template's own role files cover (_ROLE_FILE_COVERED), only the blocks after the carrying
+    file's last change count -- from the day after it -- and the proposal stays only if they reach the threshold."""
     try:
         import usage
         counts = usage.refusal_counts(root, _REFUSAL_WINDOW_DAYS)
+        class_counts = usage.refusal_classes(root, _REFUSAL_WINDOW_DAYS)
     except Exception:  # noqa: BLE001 -- no counts, no question
         return []
     memory = _refusal_memory(root)
     first_again = date.today().toordinal() - _REFUSAL_WINDOW_DAYS
-    found: list[tuple[str, dict[str, int]]] = []
+    lines = _worker_lines(root)
+    found: list[RefusalProposal] = []
     for check in sorted(counts):
         workers = {role: number for role, number in counts[check].items() if role != "main"}
         if sum(workers.values()) < _REFUSAL_THRESHOLD or _refusal_question_open(root, check):
@@ -2789,16 +2920,40 @@ def _new_refusal_proposals(root: Path) -> list[tuple[str, dict[str, int]]]:
                 continue
         except ValueError:
             pass
-        found.append((check, workers))
+        sentence = _refusal_sentence(check, class_counts.get(check) or {}, lines)
+        top = sorted(workers.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        carried: dict[str, list[Path]] = {}
+        if top not in _ROLE_FILE_COVERED.get(check, frozenset()):
+            carried = _carrying_files(root, sentence, sorted(workers))
+        if carried:
+            by_day = _refusals_by_day(root, check)
+            counted: dict[str, int] = {}
+            for role in workers:
+                since: Optional[date] = None
+                if role in carried:
+                    changed = [day for day in (_file_changed_on(root, path) for path in carried[role]) if day]
+                    since = min(changed) if changed else None
+                total = sum(roles.get(role, 0) for day, roles in by_day.items()
+                            if isinstance(roles.get(role, 0), int) and (since is None or day > since.isoformat()))
+                if total:
+                    counted[role] = total
+            workers = counted
+            if sum(workers.values()) < _REFUSAL_THRESHOLD:
+                continue
+            carried = {role: files for role, files in carried.items() if role in workers}
+        found.append(RefusalProposal(check, workers, sentence, carried))
     return found
 
 
 def refusal_question_text(check: str, workers: dict[str, int], line: str, language: str,
-                          classes: dict[str, int] | None = None, feedback_local: bool = False) -> tuple[str, str]:
+                          classes: dict[str, int] | None = None, feedback_local: bool = False,
+                          carried: dict[str, list[str]] | None = None) -> tuple[str, str]:
     """(title, body) of the question for a check that refused workers often. The first option, the
     recommended one, adopts `line`; no option changes the check. For a check whose sentence the template's own role
     files carry (_ROLE_FILE_COVERED) and a top role among those, the recommended option is a report to the template
-    instead (a backlog entry here with `feedback: local`), and adopting the line becomes the second."""
+    instead (a backlog entry here with `feedback: local`), and adopting the line becomes the second. `carried`
+    (role -> the files that carry `line` already, from _carrying_files) gives the same form when the top role is
+    in it; the text then names those files, and `workers` holds only the blocks counted after their last change."""
     def loc(en: str, de: str) -> str:
         return actlib.localized(language, en, de)
 
@@ -2807,14 +2962,30 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
     top = sorted(workers.items(), key=lambda item: (-item[1], item[0]))[0][0]
     class_split = ", ".join(f"`{word}` {number}" for word, number in
                             sorted((classes or {}).items(), key=lambda item: (-item[1], item[0])))
-    title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days: tell them beforehand?",
-                f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt: ihnen vorher sagen, was nicht geht?")
-    covered_role = top in _ROLE_FILE_COVERED.get(check, frozenset())
-    proposal_en = ("The template's role file already tells the worker this, so the proposal is a report to the "
+    carried = carried or {}
+    carrying = list(dict.fromkeys(name for role in workers for name in carried.get(role, [])))
+    carried_role = top in carried
+    carrying_text = ", ".join(f"`{name}`" for name in carrying)
+    if carried_role:
+        title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days although the sentence "
+                    "is already carried: report it?",
+                    f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt, obwohl der Satz "
+                    "schon dasteht: melden?")
+    else:
+        title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days: tell them beforehand?",
+                    f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt: ihnen vorher sagen, was nicht geht?")
+    covered_role = top in _ROLE_FILE_COVERED.get(check, frozenset()) or carried_role
+    proposal_en = (f"The sentence is carried already ({carrying_text}); only the blocks since the day after the last "
+                   "change of those files are counted, so the proposal is a report to the template."
+                   if carried_role else
+                   "The template's role file already tells the worker this, so the proposal is a report to the "
                    "template." if covered_role else
                    "The proposal is to tell the worker beforehand what the check does not allow, so it does not run "
                    "into it.")
-    proposal_de = ("Die Rollendatei der Vorlage sagt dem Worker das schon, vorgeschlagen ist also eine Meldung an die "
+    proposal_de = (f"Der Satz steht schon da ({carrying_text}); gezählt werden nur die Sperren ab dem Tag nach der "
+                   "letzten Änderung dieser Dateien, vorgeschlagen ist also eine Meldung an die Vorlage."
+                   if carried_role else
+                   "Die Rollendatei der Vorlage sagt dem Worker das schon, vorgeschlagen ist also eine Meldung an die "
                    "Vorlage." if covered_role else
                    "Vorgeschlagen ist, dem Worker vorher zu sagen, was die Prüfung nicht erlaubt, damit er gar nicht "
                    "erst in die Sperre läuft.")
@@ -2844,13 +3015,20 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
             report_de = "eine Meldung an die Vorlage mit den obigen Zahlen (`act-feedback`)"
         covered = [
             hint, "",
-            "- **a)** " + loc(f"(Recommended) Report: file {report_en}. The template's role file of `{top}` already "
-                              f"says this sentence, so a local line would only repeat it; the workers still ran into "
-                              "the check, which is worth knowing upstream. Effort: one report, a few minutes.",
-                              f"(Empfehlung) Melden: {report_de} anlegen. Die Rollendatei der Vorlage für `{top}` sagt "
-                              "diesen Satz schon, eine lokale Zeile würde ihn nur wiederholen; die Worker sind trotzdem "
-                              "in die Prüfung gelaufen, das ist für die Vorlage wissenswert. Aufwand: eine Meldung, "
-                              "ein paar Minuten."),
+            "- **a)** " + (loc(f"(Recommended) Report: file {report_en}. {carrying_text} already carries this "
+                               f"sentence, so a local line would only repeat it; the workers ({split}) still ran "
+                               "into the check, which is worth knowing upstream. Effort: one report, a few minutes.",
+                               f"(Empfehlung) Melden: {report_de} anlegen. {carrying_text} trägt diesen Satz schon, "
+                               f"eine lokale Zeile würde ihn nur wiederholen; die Worker ({split}) sind trotzdem in "
+                               "die Prüfung gelaufen, das ist für die Vorlage wissenswert. Aufwand: eine Meldung, "
+                               "ein paar Minuten.") if carried_role else
+                           loc(f"(Recommended) Report: file {report_en}. The template's role file of `{top}` already "
+                               f"says this sentence, so a local line would only repeat it; the workers still ran into "
+                               "the check, which is worth knowing upstream. Effort: one report, a few minutes.",
+                               f"(Empfehlung) Melden: {report_de} anlegen. Die Rollendatei der Vorlage für `{top}` sagt "
+                               "diesen Satz schon, eine lokale Zeile würde ihn nur wiederholen; die Worker sind trotzdem "
+                               "in die Prüfung gelaufen, das ist für die Vorlage wissenswert. Aufwand: eine Meldung, "
+                               "ein paar Minuten.")),
             "",
             "- **b)** " + loc(f"Adopt anyway: put this sentence {where_en}: \"{line}\" Effort: one line, a few minutes.",
                               f"Trotzdem übernehmen: diesen Satz {where_de}: \"{line}\" Aufwand: eine Zeile, ein paar "
@@ -2897,19 +3075,17 @@ def file_refusal_questions(root: Path) -> list[Path]:
         return []
     language = actlib.docs_language(root)
     feedback_local = (actlib.read_config(root).get("feedback") or "").strip().lower() == "local"
-    lines = _worker_lines(root)
     try:
         import usage
         class_counts = usage.refusal_classes(root, _REFUSAL_WINDOW_DAYS)
     except Exception:  # noqa: BLE001 -- no classes, the sentence of the check
         class_counts = {}
     written: list[Path] = []
-    for check, workers in new:
-        classes = class_counts.get(check) or {}
-        top_class = sorted(classes.items(), key=lambda item: (-item[1], item[0]))[0][0] if classes else ""
-        line = lines.get(f"{check}:{top_class}") or lines.get(check) or (f"Before a call that `{check}` may refuse, read what it allows in "
-                                    "`.act/rules/topics/checks.md`; a refusal is not retried another way.")
-        title, body = refusal_question_text(check, workers, line, language, classes, feedback_local)
+    for proposal in new:
+        check = proposal.check
+        carried = {role: [_shown_path(root, path) for path in files] for role, files in proposal.carried.items()}
+        title, body = refusal_question_text(check, proposal.workers, proposal.sentence, language,
+                                            class_counts.get(check) or {}, feedback_local, carried)
         try:
             path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True,
                                            slug=f"worker-refusals-{check}")
@@ -3050,6 +3226,122 @@ def check_answered_edits(root: Path) -> list[Finding]:
                          + ". The human's words stay as they are (R-human-text): check the change, or restore "
                            "the file from the last commit"),
             ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# Stale open inbox entries -- an open entry whose facts a later answer, commit or finished task has overtaken.
+# Two parts, one switch (`inbox-stale` in docs/ai/config.md § Inbox: a number of days, `off` or `0` skips both,
+# default INBOX_STALE_DEFAULT_DAYS): (a) an open entry whose heading or header names a task, backlog or question
+# id that is archived or has `status: done`; (b) an open `kind: report` older than that many days, counted from its
+# `updated:` field when it has one, else from `created:`. A hint only, never a block.
+# ---------------------------------------------------------------------------
+
+INBOX_STALE_DEFAULT_DAYS = 14
+_STALE_ID_RE = re.compile(r"(?<![A-Za-z0-9])([TBQ])0*(\d+)(?![A-Za-z0-9])")
+_HEADER_DATE_RE = re.compile(r"^\s*(\d{4})-(\d\d)-(\d\d)")
+
+
+def inbox_stale_days(root: Path) -> Optional[int]:
+    """The age limit in days; None while the check is off. A missing, empty or unreadable value means the default."""
+    value = actlib.read_config(root).get("inbox-stale", "").strip().strip("`").strip().lower()
+    if value == "off" or (re.fullmatch(r"\d+", value) and int(value) == 0):
+        return None
+    return int(value) if re.fullmatch(r"\d+", value) else INBOX_STALE_DEFAULT_DAYS
+
+
+def _header_field(header: str, name: str) -> str:
+    match = re.search(rf"(?im)^{name}:[ \t]*(.*?)[ \t]*$", header)
+    return match.group(1) if match else ""
+
+
+def _archived_ids(root: Path) -> set[str]:
+    """Every entry id under the archive folder: single archived files and the sections of monthly collections."""
+    found: set[str] = set()
+    archive = root / entries.ARCHIVE_DIR
+    if not archive.is_dir():
+        return found
+    for path in archive.rglob("*.md"):
+        text = _read_text(path)
+        if text is not None:
+            found.update(actlib.entry_ids(text))
+    return found
+
+
+def _done_ids(root: Path) -> set[str]:
+    """The ids of the entries (task, backlog, inbox) whose header says `status: done`, and of the tasks whose header
+    carries a `finished:` field."""
+    found: set[str] = set()
+    for folder in (entries.KIND_DIR["task"], entries.KIND_DIR["backlog"], actlib.INBOX_DIR):
+        base = root / folder
+        for path in base.glob("*.md") if base.is_dir() else []:
+            text = _read_text(path)
+            if text is None or actlib.is_collection(text):
+                continue
+            header = actlib.header_block(text)
+            finished = folder == entries.KIND_DIR["task"] and bool(_header_field(header, "finished"))
+            if finished or _header_field(header, "status").lower() == "done":
+                found.update(actlib.entry_ids(text))
+    return found
+
+
+def _first_heading_of(text: str) -> str:
+    body = actlib.split_header(text)[1]
+    for line in body.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return ""
+
+
+def check_inbox_stale(root: Path) -> list[Finding]:
+    days = inbox_stale_days(root)
+    inbox = root / actlib.INBOX_DIR
+    if days is None or not inbox.is_dir():
+        return []
+    open_entries: list[tuple[Path, str, str]] = []  # (path, header, title) of each open entry
+    for path in sorted(inbox.glob("*.md")):
+        text = _read_text(path)
+        if text is None or path.name.lower() == "readme.md":
+            continue
+        header = actlib.header_block(text)
+        if _header_field(header, "status").lower() == "open":
+            open_entries.append((path, header, _first_heading_of(text)))
+    findings: list[Finding] = []
+    gone: Optional[set[str]] = None
+    today = date.today()
+    for path, header, title in open_entries:
+        own = {actlib.canonical_id(_header_field(header, name)) for name in ("id", "formerly") if _header_field(header, name)}
+        searched = title + "\n" + "\n".join(line for line in header.split("\n")
+                                            if not line.lower().startswith(("id:", "formerly:")))
+        named = []
+        for match in _STALE_ID_RE.finditer(searched):
+            entry_id = actlib.canonical_id(match.group(1) + match.group(2))
+            if entry_id not in own and entry_id not in named:
+                named.append(entry_id)
+        if named:
+            if gone is None:
+                gone = _archived_ids(root) | _done_ids(root)
+            done = [entry_id for entry_id in named if entry_id in gone]
+            if done:
+                findings.append(Finding(
+                    path=_rel(path, root), line=None, kind="inbox-stale",
+                    message=(f"names {', '.join(done)}, which {'is' if len(done) == 1 else 'are'} done/archived "
+                             "— check whether the entry is still current"),
+                ))
+        if _header_field(header, "kind").lower() == "report":
+            stamp = _HEADER_DATE_RE.match(_header_field(header, "updated") or _header_field(header, "created"))
+            if stamp:
+                try:
+                    age = (today - date(int(stamp.group(1)), int(stamp.group(2)), int(stamp.group(3)))).days
+                except ValueError:
+                    continue
+                if age > days:
+                    findings.append(Finding(
+                        path=_rel(path, root), line=None, kind="inbox-stale",
+                        message=(f"open report older than {days} days ({age} days since "
+                                 f"{'it was last updated' if _header_field(header, 'updated') else 'it was created'}) "
+                                 "— archive it once covered (documented, built, recorded) or act on it"),
+                    ))
     return findings
 
 
@@ -3412,30 +3704,242 @@ def check_frontmatter(root: Path) -> list[Finding]:
 # Inbox
 # ---------------------------------------------------------------------------
 
-def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
+# --- Findings with a choice ---------------------------------------------------------------------------
+# A finding the owner can answer in more than one way (shorten, raise a limit, switch the check off, split, keep) is
+# a decision, so --inbox files one question per group instead of leaving it in the report (the human is asked, R-human-ask). The
+# groups: the own-rules size, the over-long project docs files, and the other docs-order kinds. A question is not
+# filed again while one with the group's slug is open, nor within _CHOICE_WINDOW_DAYS days of the last one; the
+# report then names the question in one line per group instead of the findings. A plain run is not changed.
+_CHOICE_GROUPS: dict[str, tuple[str, ...]] = {
+    "own-rules-size": ("own-rules-size",),
+    "docs-file-long": ("docs-file-long",),
+    "docs-order": ("docs-index-missing", "docs-index-stale", "docs-link-dead", "docs-index-deep",
+                   "docs-concept-decided"),
+}
+_CHOICE_WINDOW_DAYS = 7
+_CHOICE_MEMORY_FILE = Path(".act-local") / "doctor-questions.json"
+
+
+@dataclass
+class ChoiceQuestion:
+    group: str
+    count: int      # findings the question lists
+    ident: str      # the question's id (or its file name where it has none yet)
+    path: Path
+    new: bool       # filed by this run
+
+
+def _choice_memory(root: Path) -> dict[str, str]:
+    """group -> date (YYYY-MM-DD) its question was last filed; empty when there is none or it cannot be read."""
+    try:
+        data = json.loads((root / _CHOICE_MEMORY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, str)} if isinstance(data, dict) else {}
+
+
+def _choice_question_open(root: Path, group: str) -> Optional[Path]:
+    """The open question of `group` in the inbox, if there is one."""
+    inbox = root / actlib.INBOX_DIR
+    slug = entries._slugify(f"doctor-{group}")
+    for path in sorted(inbox.glob(f"*-{slug}.md")) if inbox.is_dir() else []:
+        try:
+            header = actlib.header_block(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if re.search(r"(?im)^status:\s*open\b", header):
+            return path
+    return None
+
+
+def _entry_ident(path: Path) -> str:
+    try:
+        match = re.search(r"(?im)^id:\s*(\S+)\s*$", actlib.header_block(path.read_text(encoding="utf-8")))
+    except (OSError, UnicodeDecodeError):
+        match = None
+    return match.group(1) if match else path.name
+
+
+def choice_question_text(group: str, findings: list[Finding], language: str, budget: Optional[int] = None,
+                         ) -> tuple[str, str]:
+    """(title, body) of the question for the findings of `group`. The recommended option is a), marked
+    `(Recommended)` right after the letter; no option changes a check without the owner's answer."""
+    def loc(en: str, de: str) -> str:
+        return actlib.localized(language, en, de)
+
+    count = len(findings)
+    listing = "\n".join(f"- {f.render()}" for f in findings)
+    if group == "own-rules-size":
+        title = loc("The always-loaded own rules are over their budget: shorten them, raise it or switch it off?",
+                    "Die immer geladenen eigenen Regeln sind über dem Budget: kürzen, Budget anheben oder abschalten?")
+        now = f"{budget:,}" if budget else "6,000"
+        options = [
+            loc("(Recommended) Shorten the own rules: keep a one-line rule each and move incident, evidence and "
+                "identifiers into the project docs. Effort: about 15 minutes of editing; every session loads "
+                "less afterwards.",
+                "(Empfehlung) Die eigenen Regeln kürzen: je Regel eine Zeile, Vorfall, Beleg und Kennungen in die "
+                "Projektdoku verschieben. Aufwand: etwa 15 Minuten Bearbeiten; jede Sitzung lädt danach weniger."),
+            loc(f"Raise the budget: set `own-rules-budget` in `docs/ai/config.md` § Checks above the current "
+                f"{now} characters. Effort: one table row, a minute; the size stays.",
+                f"Budget anheben: `own-rules-budget` in `docs/ai/config.md` § Checks über die jetzigen {now} Zeichen "
+                "setzen. Aufwand: eine Tabellenzeile, eine Minute; die Größe bleibt."),
+            loc("Switch the check off: `own-rules-budget: off` in `docs/ai/config.md` § Checks. Effort: one table "
+                "row; the size is no longer watched.",
+                "Die Prüfung abschalten: `own-rules-budget: off` in `docs/ai/config.md` § Checks. Aufwand: eine "
+                "Tabellenzeile; die Größe wird nicht mehr überwacht."),
+        ]
+        hint = loc("`doctor.py` found the always-loaded own rules over their budget (`own-rules-budget`). "
+                   "The findings:",
+                   "`doctor.py` hat die immer geladenen eigenen Regeln über dem Budget gefunden (`own-rules-budget`). "
+                   "Die Befunde:")
+    elif group == "docs-file-long":
+        title = loc(f"{count} project docs file(s) of about {DOCS_FILE_LONG_LINES} lines or more: split them?",
+                    f"{count} Datei(en) der Projektdoku ab etwa {DOCS_FILE_LONG_LINES} Zeilen: aufteilen?")
+        options = [
+            loc("(Recommended) Split each file into a folder with a `README.md` and parts (`R-docs-order`). Effort: "
+                "about 10 minutes per file.",
+                "(Empfehlung) Jede Datei in einen Ordner mit `README.md` und Teilen aufteilen (`R-docs-order`). "
+                "Aufwand: etwa 10 Minuten je Datei."),
+            loc(f"Keep them as they are. The findings stay in the report; a new question comes at the earliest "
+                f"{_CHOICE_WINDOW_DAYS} days after this one. Effort: none.",
+                f"So lassen. Die Befunde bleiben im Bericht; eine neue Frage kommt frühestens {_CHOICE_WINDOW_DAYS} "
+                "Tage nach dieser. Aufwand: keiner."),
+        ]
+        hint = loc("`doctor.py` found project docs files at or over the length limit (`R-docs-order`). The findings:",
+                   "`doctor.py` hat Dateien der Projektdoku an oder über der Längengrenze gefunden (`R-docs-order`). "
+                   "Die Befunde:")
+    else:
+        title = loc(f"{count} finding(s) on the order of the project docs: fix them or switch the check off?",
+                    f"{count} Befund(e) zur Ordnung der Projektdoku: beheben oder die Prüfung abschalten?")
+        options = [
+            loc("(Recommended) Fix them as the findings say (an index line, a link, archiving a decided concept; "
+                "`R-docs-order`). Effort: a few minutes per finding.",
+                "(Empfehlung) Sie so beheben, wie die Befunde es sagen (eine Indexzeile, ein Verweis, ein "
+                "entschiedenes Konzept archivieren; `R-docs-order`). Aufwand: wenige Minuten je Befund."),
+            loc("Switch the check off: `docs-order: off` in `docs/ai/config.md` § Checks. Effort: one table row; the "
+                "order of the project docs is no longer watched.",
+                "Die Prüfung abschalten: `docs-order: off` in `docs/ai/config.md` § Checks. Aufwand: eine "
+                "Tabellenzeile; die Ordnung der Projektdoku wird nicht mehr überwacht."),
+        ]
+        hint = loc("`doctor.py` found the project docs out of order (`R-docs-order`). The findings:",
+                   "`doctor.py` hat die Projektdoku nicht in Ordnung gefunden (`R-docs-order`). Die Befunde:")
+    lines = [hint, "", listing, ""]
+    for letter, option in zip("abc", options):
+        lines += [f"- **{letter})** {option}", ""]
+    return title, "\n".join(lines) + "\n"
+
+
+def file_choice_questions(root: Path, findings: list[Finding]) -> list[ChoiceQuestion]:
+    """One inbox question for each group of findings with a choice (_CHOICE_GROUPS) that has findings now, no open
+    question and none filed within _CHOICE_WINDOW_DAYS days. Returns the questions the report names: the ones
+    written by this run and the open ones. Best effort: a question that cannot be written is skipped with a
+    warning and returns with the next run."""
+    language = actlib.docs_language(root)
+    memory = _choice_memory(root)
+    first_again = date.today().toordinal() - _CHOICE_WINDOW_DAYS
+    named: list[ChoiceQuestion] = []
+    for group, kinds in _CHOICE_GROUPS.items():
+        group_findings = [f for f in findings if f.kind in kinds]
+        if not group_findings:
+            continue
+        open_path = _choice_question_open(root, group)
+        if open_path is not None:
+            named.append(ChoiceQuestion(group, len(group_findings), _entry_ident(open_path), open_path, False))
+            continue
+        try:
+            if date.fromisoformat(memory.get(group, "")).toordinal() > first_again:
+                continue
+        except ValueError:
+            pass
+        title, body = choice_question_text(group, group_findings, language, own_rules_budget(root))
+        try:
+            path, ident = entries.create_entry(root, "question", title, body=body, answer_block=True,
+                                               slug=f"doctor-{group}")
+        except (OSError, ValueError) as exc:
+            print(f"doctor.py: question for the {group!r} findings not filed: {exc}", file=sys.stderr)
+            continue
+        named.append(ChoiceQuestion(group, len(group_findings), ident or path.name, path, True))
+        memory[group] = date.today().isoformat()
+        try:
+            actlib.write_text_atomic(root / _CHOICE_MEMORY_FILE, json.dumps(memory, indent=2, sort_keys=True) + "\n")
+        except OSError:
+            print(f"doctor.py: could not write {_CHOICE_MEMORY_FILE.as_posix()} -- the question for {group!r} "
+                  "will be filed again with the next run", file=sys.stderr)
+    return named
+
+
+_REPORT_STATE_FILE = Path(".act-local") / "doctor-report-state.json"
+
+
+def _report_state(root: Path) -> dict[str, str]:
+    """report path (relative to the project, forward slashes) -> sha256 of the text doctor last wrote there; empty
+    when there is none or it cannot be read (every report then counts as changed)."""
+    try:
+        data = json.loads((root / _REPORT_STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, str)} if isinstance(data, dict) else {}
+
+
+def _remember_report(root: Path, path: Path, data: bytes) -> None:
+    """Note the hash of the text just written to `path`, so a later run can tell whether anyone changed it. Best
+    effort: without the note the report counts as changed and the next run writes a fresh one."""
+    state = _report_state(root)
+    state[_rel(path, root)] = hashlib.sha256(data).hexdigest()
+    try:
+        actlib.write_text_atomic(root / _REPORT_STATE_FILE, json.dumps(state, indent=2, sort_keys=True) + "\n")
+    except OSError:
+        print(f"doctor.py: could not write {_REPORT_STATE_FILE.as_posix()}", file=sys.stderr)
+
+
+def _open_doctor_report(root: Path) -> Optional[tuple[Path, str, bool]]:
+    """The newest doctor report in the inbox that is still `status: open`: (path, its `created:` value, whether it
+    is byte-equal to what doctor last wrote there). A person's note, an added header field or a missing or unreadable
+    state all make it "changed"; such a report is never rewritten. None when there is no open one."""
+    inbox_dir = root / actlib.INBOX_DIR
+    best: Optional[tuple[str, str, Path, bytes]] = None
+    for candidate in sorted(inbox_dir.glob("report-*-doctor.md")) if inbox_dir.is_dir() else []:
+        try:
+            raw = candidate.read_bytes()
+            text = raw.decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        header = actlib.header_block(text)
+        status = re.search(r"(?im)^status:\s*(.*?)\s*$", header)
+        if not status or status.group(1).strip() != "open":
+            continue
+        created = re.search(r"(?im)^created:\s*(.*?)\s*$", header)
+        named = re.fullmatch(r"report-(\d{8}-\d{4})-(?:(\d+)-)?doctor\.md", candidate.name)
+        order = f"{named.group(1)}-{int(named.group(2) or 1):06d}" if named else candidate.name
+        key = (created.group(1) if created else "", order, candidate, raw)
+        if best is None or key[:2] > best[:2]:
+            best = key
+    if best is None:
+        return None
+    unchanged = _report_state(root).get(_rel(best[2], root)) == hashlib.sha256(best[3]).hexdigest()
+    return best[2], best[0], unchanged
+
+
+def write_inbox(root: Path, findings: list[Finding], questions: Optional[list[ChoiceQuestion]] = None) -> Optional[Path]:
     # A tool's own report of what it found (finding 12 in the module docstring is one input to
     # this, not a decision by itself) — no action is asked of anyone but reading it, so `kind:
-    # report` (a plain notice), never `todo`. A re-run today
-    # replaces today's own file rather than piling up near-duplicates — but only while that file
-    # is still `status: open` and unread: once a person has answered it (or it is from an earlier
-    # day), overwriting it would erase their words under it (R-human-text) and silently reopen a
-    # closed entry, so a fresh file is written instead.
-    if not findings:
+    # report` (a plain notice), never `todo`. A new run rewrites the newest doctor report that is
+    # still `status: open` in place (body replaced, `created:` kept, `updated:` set) instead of
+    # piling up another file, but only while the file is byte-equal to what doctor last wrote
+    # there (a hash kept in _REPORT_STATE_FILE): once a person has answered it, added a note or a
+    # header field (or it was archived), it is left alone — overwriting it would erase their words
+    # (R-human-text) and silently reopen a closed entry — and a fresh file is written.
+    # `questions` are the questions filed for findings with a
+    # choice (file_choice_questions): the report names them in one line each, their findings are not
+    # in `findings`. With neither findings nor questions nothing is written and an old report stays.
+    questions = questions or []
+    if not findings and not questions:
         return None
     inbox_dir = root / actlib.INBOX_DIR
-    today_stamp_prefix = f"report-{date.today().strftime('%Y%m%d')}-"
-    dest = None
-    if inbox_dir.is_dir():
-        for candidate in sorted(inbox_dir.glob("report-*-doctor.md")):
-            if not candidate.name.startswith(today_stamp_prefix):
-                continue
-            try:
-                text = candidate.read_text(encoding="utf-8")
-            except OSError:
-                continue
-            match = re.search(r"(?im)^status:\s*(.*?)\s*$", actlib.header_block(text))
-            if match and match.group(1).strip() == "open":
-                dest = candidate
+    found = _open_doctor_report(root)
+    existing = found if found and found[2] else None  # a changed report is left as it is
+    created = existing[1] if existing and existing[1] else actlib.created_stamp()
+    dest = existing[0] if existing else None
     if dest is None:
         # Within the same minute as a report that must not be reused (answered, or no longer
         # open), the stamped name is the same — count up instead of writing over it.
@@ -3447,9 +3951,20 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
             n += 1
     language = actlib.docs_language(root)
     title = actlib.localized(language, "# doctor findings", "# Doctor-Befunde")
-    header = actlib.format_header(["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}"],
-                                  actlib.writes_frontmatter("report"))
+    fields = ["kind: report", "for: all", "status: open", f"created: {created}"]
+    if existing:
+        fields.append(f"updated: {actlib.created_stamp()}")
+    header = actlib.format_header(fields, actlib.writes_frontmatter("report"))
     lines = [header.rstrip("\n"), "", title, ""]
+    if questions:
+        lines.append(f"## {actlib.localized(language, 'Findings with a choice, asked as a question', 'Befunde mit einer Wahl, als Frage gestellt')}")
+        lines.append("")
+        for item in questions:
+            lines.append("- " + actlib.localized(
+                language,
+                f"`{item.group}`: {item.count} finding(s), see question {item.ident}",
+                f"`{item.group}`: {item.count} Befund(e), siehe Frage {item.ident}"))
+        lines.append("")
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
         if not group:
@@ -3459,7 +3974,9 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
         lines.extend(f"- {f.render()}" for f in group)
         lines.append("")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8", newline="\n")
+    data = ("\n".join(lines).rstrip("\n") + "\n").encode("utf-8")
+    dest.write_bytes(data)
+    _remember_report(root, dest, data)
     return dest
 
 
@@ -3522,6 +4039,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_frontmatter(root)
     findings += check_reasoning_none(root)
     findings += check_answered_edits(root)
+    findings += check_inbox_stale(root)
     findings += check_tier_proposal(root)
     findings += check_template_remote(root)
 
@@ -3559,7 +4077,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", metavar="DIR", help="check this project instead of the current checkout")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings, and one inbox question per new tier proposal and per check that refused workers often")
+    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings (a later run rewrites the newest open one in place), and one inbox question per new tier proposal, per check that refused workers often and per group of findings with a choice")
     parser.add_argument("--accept", action="append", default=[], metavar="ID", help="accept the current template text for ID, a rule id or skill:<name> (repeatable)")
     parser.add_argument("--accept-all", action="store_true", help="accept the current template text for every stale override/off")
     return parser
@@ -3616,7 +4134,16 @@ def main(argv: list[str]) -> int:
         # doctor report carries the other findings and is skipped when there are none.
         for question in file_tier_questions(root) + file_refusal_questions(root):
             print(f"doctor.py: wrote {_rel(question, root)}")
-        written = write_inbox(root, [f for f in findings if f.kind != "tier-proposal"])
+        # A finding with a choice is a decision too: one question per group, and the report names it instead of
+        # listing those findings (none for a group whose question is not filed now and not open: its findings
+        # stay in the report).
+        reportable = [f for f in findings if f.kind != "tier-proposal"]
+        asked = file_choice_questions(root, reportable)
+        for item in asked:
+            if item.new:
+                print(f"doctor.py: wrote {_rel(item.path, root)}")
+        asked_kinds = {kind for item in asked for kind in _CHOICE_GROUPS[item.group]}
+        written = write_inbox(root, [f for f in reportable if f.kind not in asked_kinds], asked)
         if written is not None:
             print(f"doctor.py: wrote {_rel(written, root)}")
 
