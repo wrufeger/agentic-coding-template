@@ -102,10 +102,15 @@
 #   - inline interpreter code (`python -c`, a literal piped into `python -`): its write calls are read once and
 #     resolved against every directory the call may run in; a crash of that reader comes back as one dynamic
 #     target holding the command text, never as an empty answer.
-#   - check 1 only (`broad=True`, see _broad_guard_candidates): additionally, every word of a
+#   - with `broad=True` only (see _broad_guard_candidates; asked by check 1, checks/write_guard.py, and by
+#     checks/git_metadata_guard.py, which both get this one reading): additionally, every word of a
 #     Start-Process/Invoke-Command/python(3)/py invocation (their own write behaviour is opaque —
 #     this is a literal-text net, not a resolved target), every word after `& $sb`/`& { ... }`
 #     appearing anywhere in a statement, and every word to the right of `$var =`.
+#   - the written-out form of a command (_ps_written_out: a read-only assignment as the call alone, `& $v ...`
+#     with `$v` set once to a literal as that call) is another text, not a reading of this scanner: check 1 alone
+#     asks for it, for every PowerShell command whose targets this scanner found (not for one it could not read),
+#     and reads that text like any other command; the answer can only change the targets to those of that text.
 #
 # Statement separators: `;`, `|`, a bare newline, `&&`/`||` (PS 7) — see _ps_tokens.
 # Quoting: '...' verbatim except '' -> a literal '; "..." with a backtick as the escape character
@@ -144,6 +149,7 @@ import functools
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -191,7 +197,7 @@ __all__ = [
     "_scan_ps_tokens", "_ps_raw_redirect_targets", "_powershell_write_targets",
     "_PsInlineTarget", "_powershell_inline_code_targets", "_MAX_TRACKED_DIRECTORIES", "_RESOLUTION_BUDGET",
     "_unplaced_target", "_is_unplaced_target", "_unplaced_reason", "_ScanLimit", "_ScanBudget", "_InlineSink",
-    "_collect_ps_inline", "_inline_sink_targets", "_scan_ps_inline",
+    "_collect_ps_inline", "_inline_sink_targets", "_scan_ps_inline", "_ps_written_out",
 ]
 
 _Token = tuple[str, bool]  # (text, is_operator) — same shape as shell_targets._Token
@@ -578,9 +584,11 @@ def _consume_here_string(command: str, index: int) -> Optional[tuple[str, int]]:
 
 class _RawWord(str):
     """The text of a word token (quotes removed, as every consumer reads it) that also holds the word as written,
-    quotes and escapes kept, in `raw`: a `'Open,Read'` and a `'Open','Read'` read the same without it."""
+    quotes and escapes kept, in `raw`: a `'Open,Read'` and a `'Open','Read'` read the same without it. `start` is
+    where the word begins in the command (`raw` is the command text from there on), for _ps_written_out."""
 
     raw: str
+    start: int
 
 
 def _ps_tokens(command: str) -> Optional[list[_Token]]:
@@ -597,6 +605,7 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
         if word:
             text = _RawWord("".join(word))
             text.raw = command[start:i]
+            text.start = start
             tokens.append((text, False))
             word.clear()
 
@@ -1836,3 +1845,283 @@ def _powershell_inline_code_targets(command: str, base_cwd: str) -> list[_PsInli
         # budget: the inline part ends here. Another kind of error is a bug and propagates to the dispatcher.
         _inline_code.report_skipped("PowerShell scan", error)
         return []
+
+
+# The written-out form of a command (_ps_written_out). It is no reading of the scanner above, which stays the same
+# for every caller: check 1 (checks/write_guard.py) alone asks for this text, for every PowerShell command whose
+# targets the scanner found (not for one it could not read), and reads it like any other command; when that text
+# has targets, they replace those of the command, and that is all the written-out form can change. Two forms are
+# written out, each an allow-list; everything else stays:
+#   - `$name = <read-only cmdlet> <plain words>` becomes the call alone (`Get-Content .act/x`), which names no
+#     target and no candidate;
+#   - `& $v args` becomes `& '<literal>' args` when the command sets `$v` once, before the call, to a quoted literal.
+# A command has no written-out form when it may give a cmdlet name or a variable another meaning
+# (_ps_written_out_off, _ps_computed_command) or when PowerShell may cut it into words and statements another way
+# than _ps_tokens does (_ps_reads_differently). A nested `-c` text is a quoted word and is never written out.
+
+# Cmdlets (and their aliases) that only read. Matched against the word as written, lower-cased: a path (`./cat`), a
+# quoted word or an escape never counts.
+_PS_READ_ONLY_ASSIGNED = frozenset({
+    "get-content", "gc", "cat", "type", "get-item", "gi", "get-childitem", "gci", "ls", "dir",
+    "select-string", "sls", "test-path", "measure-object",
+})
+# The variable of a read-only assignment: a plain name, or one with a scope (`$script:x`). Not `$env:x`, `$d:x`,
+# `$function:x` or another provider drive: an assignment there writes to the provider.
+_PS_READ_ASSIGN_VAR_RE = re.compile(r"^\$(?:(?:global|local|script|private):)?\w+$", re.IGNORECASE)
+# Words and text that may define or replace a command, or set a variable under a name the text does not show: the
+# alias and function commands and drives, a new drive (`New-PSDrive a Alias ''` reaches the aliases as `a:`), a module
+# or a script loaded into the session, the commands that run a text or a script block, the commands and objects
+# that get, set, clear or remove a variable (`(gv p?).Value = ...` sets the variable it got), a changed search path.
+_PS_WRITTEN_OUT_OFF_RE = re.compile(
+    r"(?<![\w-])(?:set-alias|sal|new-alias|nal|import-alias|ipal|remove-alias|ral|alias|function|filter"
+    r"|new-psdrive|ndr|mount|import-module|ipmo|using|invoke-command|icm|invoke-expression|iex"
+    r"|set-variable|sv|new-variable|nv|clear-variable|clv|remove-variable|rv|get-variable|gv|set)(?![\w-])"
+    r"|variable|executioncontext|sessionstate|scriptblock|\.value|\.ps1|env:path",
+    re.IGNORECASE,
+)
+# Quote characters PowerShell accepts next to `'` and `"` (U+2018 to U+201E); the tokenizer knows the two only.
+_PS_TYPOGRAPHIC_QUOTES = "‘’‚‛“”„"
+_PS_LONE_CR_RE = re.compile(r"\r(?!\n)")
+_PS_STATEMENT_SEPARATORS = frozenset({";", "\n", "|", "&&", "||"})
+_PS_STREAM_TARGET_RE = re.compile(r"^&\d+$")  # the word behind `2>` in `2>&1`
+_PS_DOT_CALL_RE = re.compile(r"""^\.[$'"({@]""")
+# The literal a variable is set to, as written: a single-quoted string, or a double-quoted one without `$` or a
+# backtick (nothing in it expands). A bare word is none: `$v = python` runs the command `python` and stores its
+# output.
+_PS_LITERAL_RAW_RE = re.compile(r"""^(?:'[^']*'|"[^"$`]*")$""")
+_PS_VAR_RAW_RE = re.compile(r"^\$([A-Za-z0-9_]+)$")
+_PS_NAME_RUN_RE = re.compile(r"\w+")
+# No variable is written out for a command with more assignments than this.
+_PS_MAX_WRITTEN_OUT_ASSIGNMENTS = 20
+
+
+def _ps_written_out_off(tokens: list[_Token]) -> bool:
+    """True when a word of the command holds a brace (a script block, a function body, `${name}`: another scope or
+    another spelling) or a word or text of _PS_WRITTEN_OUT_OFF_RE: then a cmdlet name or a variable in it may not
+    be what it seems. Each word is read as text and as written, so a quote or an escape hides nothing."""
+    for text, is_op in tokens:
+        if is_op:
+            continue
+        for part in (str(text), getattr(text, "raw", text)):
+            if "{" in part or "}" in part or _PS_WRITTEN_OUT_OFF_RE.search(part):
+                return True
+    return False
+
+
+def _ps_reads_differently(command: str, tokens: list[_Token]) -> bool:
+    """True when PowerShell may cut `command` into words and statements another way than _ps_tokens does, so that a
+    statement is not safely told from its neighbours: a typographic quote (a quote to PowerShell), a carriage
+    return outside a CR LF line break (a line break to PowerShell), a `#` right behind a word (`a#b`, `<# ... #>`:
+    PowerShell reads on, the tokenizer takes the rest of the line for a comment) or the stop-parsing token `--%`."""
+    if any(quote in command for quote in _PS_TYPOGRAPHIC_QUOTES) or _PS_LONE_CR_RE.search(command):
+        return True
+    for text, is_op in tokens:
+        if is_op:
+            continue
+        raw = getattr(text, "raw", text)
+        end = getattr(text, "start", 0) + len(raw)
+        if raw == "--%" or command[end:end + 1] == "#":
+            return True
+    return False
+
+
+def _ps_statements(tokens: list[_Token]) -> list[list[int]]:
+    """The token indexes of each statement of a tokenized command, cut at `;`, a line break, `|`, `&&` and `||`; a
+    redirection operator stays in its statement."""
+    statements: list[list[int]] = [[]]
+    for index, (text, is_op) in enumerate(tokens):
+        if is_op and text in _PS_STATEMENT_SEPARATORS:
+            statements.append([])
+        else:
+            statements[-1].append(index)
+    return statements
+
+
+def _is_read_only_assignment(words: list[str]) -> bool:
+    """True for the statement `$name = <read-only cmdlet> <argument>...` (_PS_READ_ONLY_ASSIGNED) whose every
+    argument is a plain word (_PS_PLAIN_ARG_RE: no sub-expression, script block, array comma, escape or
+    statement separator) without a `&`. The variable (_PS_READ_ASSIGN_VAR_RE: a plain name or one with a scope,
+    no provider drive) and the cmdlet must stand as written, with no quotes or escapes (the word equals its raw
+    text). Anything else - another program, a string, an expression - is no read-only assignment."""
+    if len(words) < 3 or words[1] != "=" or not _PS_READ_ASSIGN_VAR_RE.match(words[0]):
+        return False
+    for word in words[:3]:
+        if getattr(word, "raw", word) != word:
+            return False
+    if not words[2].isascii() or words[2].lower() not in _PS_READ_ONLY_ASSIGNED:
+        return False
+    return all(
+        "&" not in word and not _is_here_string_word(word) and _PS_PLAIN_ARG_RE.match(word) for word in words[3:]
+    )
+
+
+def _ps_name_runs(text: str) -> list[str]:
+    """The names `text` may spell: every run of word characters, in each form a comparison that ignores case may
+    take it for (lower case, upper case turned back, case folded). A run glued to a path, an extension or a
+    parameter dash (`board.py`, `/py/`, `-py`) is no name."""
+    found: list[str] = []
+    for match in _PS_NAME_RUN_RE.finditer(text):
+        if match.start() and text[match.start() - 1] in "./\\-":
+            continue
+        run = match.group(0)
+        found.extend({run.lower(), run.upper().lower(), run.casefold()})
+    return found
+
+
+def _ps_statement_certain(tokens: list[_Token], members: list[int]) -> bool:
+    """True when the statement `members` certainly runs, as a statement of its own: it starts the command or
+    follows `;` or line breaks behind a word or `;`, and it ends the command, is followed by `;`, or by line breaks
+    behind which no `|`, `&&` or `||` goes on (PowerShell 7 continues a pipeline with a `|` that starts the next
+    line). In front of or behind `|`, `&&` or `||` it may not run, or its value is the output of the whole chain."""
+    index = members[0] - 1
+    while index >= 0 and tokens[index] == ("\n", True):
+        index -= 1
+    if index >= 0 and tokens[index][1] and tokens[index][0] != ";":
+        return False
+    index = members[-1] + 1
+    if index < len(tokens) and tokens[index] == (";", True):
+        return True
+    while index < len(tokens) and tokens[index] == ("\n", True):
+        index += 1
+    return index >= len(tokens) or not tokens[index][1] or tokens[index][0] == ";"
+
+
+def _ps_literal_calls(tokens: list[_Token], statements: list[list[int]]) -> dict[int, int]:
+    """{token index of the `$v` word of a call `& $v ...`: token index of the literal `$v` stands for}, for every
+    call the written-out form replaces. Allow-list, any other call stays as it is: the call starts its statement
+    as `& $v`; the command sets `$v` exactly once, before the call, in the statement `$v = '<text>'` (or a
+    double-quoted text with nothing to expand, _PS_LITERAL_RAW_RE) that certainly runs (_ps_statement_certain);
+    the name appears nowhere else but in that assignment and in such calls (not as `$script:v`, a bare name in a
+    parameter such as `-OutVariable v`, or in a string; _ps_name_runs); no word of the command holds a
+    parenthesis (a group, a method call or a name put together) unless the word is one quoted literal, which
+    is data (`-c "print(1)"`); the command has at most _PS_MAX_WRITTEN_OUT_ASSIGNMENTS assignments. One pass
+    over the statements and one over the words."""
+
+    def raw(index: int) -> str:
+        text = tokens[index][0]
+        return getattr(text, "raw", text)
+
+    calls: dict[str, list[tuple[int, int]]] = {}  # name -> (statement number, token index of the `$v` word)
+    assigned: dict[str, list[tuple[int, list[int]]]] = {}  # name -> (statement number, tokens) of `$v = <word>`
+    assignments = 0
+    for number, members in enumerate(statements):
+        if len(members) < 2 or tokens[members[0]][1] or tokens[members[1]][1]:
+            continue
+        if raw(members[0]) == "&":
+            matched = _PS_VAR_RAW_RE.match(raw(members[1]))
+            if matched:
+                calls.setdefault(matched.group(1).lower(), []).append((number, members[1]))
+        elif raw(members[1]) == "=":
+            assignments += 1
+            matched = _PS_VAR_RAW_RE.match(raw(members[0]))
+            if matched and len(members) == 3 and not tokens[members[2]][1]:
+                assigned.setdefault(matched.group(1).lower(), []).append((number, members))
+    if not calls or assignments > _PS_MAX_WRITTEN_OUT_ASSIGNMENTS:
+        return {}
+    words = [raw(index) for index in range(len(tokens)) if not tokens[index][1]]
+    if any(("(" in word or ")" in word) and not _PS_LITERAL_RAW_RE.match(word) for word in words):
+        return {}
+    appearances = Counter(name for word in words for name in _ps_name_runs(word))
+    found: dict[int, int] = {}
+    for name, name_calls in calls.items():
+        candidates = assigned.get(name, [])
+        if len(candidates) != 1:
+            continue
+        number, members = candidates[0]
+        value = members[2]
+        if not _PS_LITERAL_RAW_RE.match(raw(value)) or not _ps_statement_certain(tokens, members):
+            continue
+        # Every appearance of the name: the variable word of the assignment and one `$v` per call, and no other
+        # (the literal itself may spell the name: `$python = 'python'`).
+        if appearances[name] - _ps_name_runs(raw(value)).count(name) != 1 + len(name_calls):
+            continue
+        for call_number, index in name_calls:
+            if call_number > number:
+                found[index] = value
+    return found
+
+
+def _ps_computed_command(tokens: list[_Token], statements: list[list[int]], literal_calls: dict[int, int]) -> bool:
+    """True when a statement of the command dot-sources (`. file`, `$x = . file`), or calls through `&` something
+    that is neither a literal program (_strip_literal_call) nor a variable the written-out form replaces
+    (`literal_calls`): what such a call runs in the session is not in the text, it may define any command or
+    variable. A word that holds a `&` other than the call operator itself or the stream of a redirection (`2>&1`)
+    counts as well."""
+    for members in statements:
+        for position, index in enumerate(members):
+            text, is_op = tokens[index]
+            if is_op:
+                continue
+            raw = getattr(text, "raw", text)
+            before = tokens[members[position - 1]] if position else None
+            if raw == "&":
+                following = members[position + 1] if position + 1 < len(members) else None
+                if following is None or tokens[following][1]:
+                    return True
+                if following not in literal_calls and len(_strip_literal_call([text, tokens[following][0]])) != 1:
+                    return True
+            elif "&" in raw and not (before is not None and before[1] and _PS_STREAM_TARGET_RE.match(raw)):
+                return True
+            starts_call = position == 0 or (
+                before is not None and not before[1] and getattr(before[0], "raw", before[0]).endswith(("=", "("))
+            )
+            if raw.endswith(("=.", "(.")) or (starts_call and (raw == "." or _PS_DOT_CALL_RE.match(raw))):
+                return True
+    return False
+
+
+def _ps_written_out(command: str) -> Optional[str]:
+    """The written-out form of the PowerShell `command`, or None when it has none: the command text with every
+    read-only assignment `$name = <read-only cmdlet> <plain words>` (_is_read_only_assignment, in a statement
+    without a redirection) cut down to the call alone, and every `& $v` whose `$v` the command sets once to a
+    literal (_ps_literal_calls) replaced by `& '<literal>'`. None for a command that cannot be tokenized, that may
+    give a cmdlet name or a variable another meaning (_ps_written_out_off, _ps_computed_command), that PowerShell
+    may read another way than the tokenizer (_ps_reads_differently), or that holds neither form. The text is
+    tokenized again before it is handed out: it must give exactly the words it was built from."""
+    tokens = _ps_tokens(command)
+    if tokens is None or any(not is_op and not isinstance(text, _RawWord) for text, is_op in tokens):
+        return None
+    if _ps_written_out_off(tokens) or _ps_reads_differently(command, tokens):
+        return None
+    statements = _ps_statements(tokens)
+    literal_calls = _ps_literal_calls(tokens, statements)
+    if _ps_computed_command(tokens, statements, literal_calls):
+        return None
+    # A word that holds `$(` or `@(` may put together a name the text does not show (`"Al$($null)ias:cat"`): no
+    # form is written out then. Only the literal a call is replaced by (data, never expanded) is left out.
+    literals = set(literal_calls.values())
+    for index, (text, is_op) in enumerate(tokens):
+        if is_op or index in literals:
+            continue
+        if any("$(" in part or "@(" in part for part in (str(text), getattr(text, "raw", text))):
+            return None
+    removed: set[int] = set()
+    edits: list[tuple[int, int, str]] = []  # (from, to, the text that replaces command[from:to])
+    for members in statements:
+        if all(not tokens[index][1] for index in members):
+            words = [tokens[index][0] for index in members]
+            # Only a statement that certainly runs on its own (_ps_statement_certain): in or next to a pipeline or
+            # `&&`/`||` the assignment may not run, or its value is the output of the whole chain.
+            if _is_read_only_assignment(words) and _ps_statement_certain(tokens, members):
+                edits.append((getattr(words[0], "start"), getattr(words[2], "start"), ""))
+                removed.update(members[:2])
+    for call, value in literal_calls.items():
+        word = tokens[call][0]
+        start = getattr(word, "start")
+        edits.append((start, start + len(getattr(word, "raw")), getattr(tokens[value][0], "raw")))
+    if not edits:
+        return None
+    pieces: list[str] = []
+    position = 0
+    for start, end, replacement in sorted(edits):
+        pieces += [command[position:start], replacement]
+        position = end
+    written = "".join(pieces) + command[position:]
+    expected =[tokens[literal_calls.get(index, index)] for index in range(len(tokens)) if index not in removed]
+    again = _ps_tokens(written)
+    if again is None or len(again) != len(expected):
+        return None
+    for (text, is_op), (want, want_op) in zip(again, expected):
+        if is_op != want_op or text != want or getattr(text, "raw", text) != getattr(want, "raw", want):
+            return None
+    return written

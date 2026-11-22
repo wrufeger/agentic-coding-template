@@ -28,6 +28,7 @@ from .inline_code import WHOLE_FOLDER, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _note_refusal_class
 from .common import _is_unplaced_target, _unplaced_reason
 from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, lists_files, ps_fed_writes, shell_facts
+from .powershell_targets import _ps_written_out
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
 from .shell_targets import _ASSIGNMENT_RE, _RESERVED_PREFIXES, _VALUE_FLAGS, _WINDOWS_SWITCH_RE
 from .shell_targets import _command_name, _raw_redirect_targets, _simple_command_targets
@@ -1129,12 +1130,22 @@ def _powershell_targets_protected_path(
     — where that write lands is unknown, so it is never resolved against `base_cwd` like a plain relative
     name. A *determinable* target (already resolved to an absolute path by the scanner) is checked against
     `root`'s own .act/ only, same as the Bash side. `parse` is the dispatcher's reading of `command`; without
-    it the command is read here."""
+    it the command is read here. A command that has a written-out form (powershell_targets._ps_written_out: a
+    read-only assignment `$x = Get-Content <plain words>` as the call alone, `& $v ...` with `$v` set once to a
+    quoted literal as the call of that literal) is judged by the targets of that form: it is another text, read
+    from a parse of its own like any other command, and this check alone asks for it - the reading of the
+    command itself stays the one every check shares. A form that cannot be evaluated changes nothing."""
     if parse is None:
         parse = Parse("PowerShell", command)
     targets = parse.write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
     if targets is None:
         return _text_message(command) if _PROTECTED_PATH_RE.search(command) else None
+    written_out = _ps_written_out(command)
+    if written_out is not None:
+        written_parse = parse.for_text(written_out)
+        written_targets = written_parse.write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
+        if written_targets is not None:
+            parse, targets = written_parse, written_targets
     for target in targets:
         if _is_unplaced_target(target):
             return _unplaced_message(target)

@@ -116,6 +116,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   parallel writers no longer mix or lose lines; an event whose lock stays taken longer is dropped.
 - A `>` or `->` in quoted text between easy `$(…)` (`echo "$(awk '{print 1}' x) -> $(date)"`,
   `sed -i 's|a|echo x > $(s=1)|'`) no longer blocks the command; only the substitutions are read.
+- The write guard no longer refuses reading PowerShell: `$t = Get-Content .act/x` (also `Select-String`, `Test-Path`,
+  `Get-ChildItem` …) and `& $py .act/scripts/x.py` with `$py` set once to a quoted literal; writes stay refused.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is
