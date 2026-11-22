@@ -54,6 +54,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   `0`): open inbox entries naming a done or archived task, backlog item or question, and open reports past the limit.
 
 ### Changed
+- `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
+  the dynamic import was meant to break a cycle or keep code out of the bundle.
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
   in bold; it is answerable without other files, and related decisions may be numbered parts in one file,
   answered `1a 2b`.
@@ -77,6 +79,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   date in the same step.
 
 ### Fixed
+- `act-deps` no longer asks for a red commit: a change a version bump forces shares the bump's commit only when
+  the bump alone would turn a check red.
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is
   started once more and then refuses the commit.
 - Scaffold `docs/ai/local/resources.md`: the example lines put their placeholders in code spans, so a Markdown editor

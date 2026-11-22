@@ -32,7 +32,10 @@ entry differently if it should not count as covering the whole check.
 4. Before a major, read its changelog for breaking changes (`R-code-version`) instead of guessing;
    search affected call sites first (`explorer` role) when there's more than one.
 5. Apply the step (`builder` role): bump the version, update the lockfile. A code change the
-   update forces (e.g. a changed API) is its own commit after the version bump, never the same one.
+   update forces (e.g. a changed API) comes first as its own commit, on the old version, where the old version
+   already accepts it. Otherwise it follows the bump in its own commit, unless the bump alone turns a check red:
+   since no red commit is made (`R-code-checks-intact`), the bump and the change it forces then go into one
+   commit, and its message says why.
 6. Check before the step counts as done (`R-code-commit`), the full or E2E suite included: red means
    revert or fix now, not later.
 7. `docs/ai/config.md` § Project → `commands` follows if a step changed the install/lint/typecheck/
@@ -51,8 +54,9 @@ re-key the entries, or they no longer match.
 ## Limits
 
 No bundled update across several majors. No dependency added that the actual task doesn't need. A
-version bump and the code change it forces never share a commit. No step counts as done without
-green checks, regardless of time pressure.
+change a bump forces is committed ahead of it when the old version accepts it, after it when the bump alone stays
+green, and in the bump's commit only when the bump alone would leave a check red; never a red commit. No step
+counts as done without green checks, regardless of time pressure.
 
 ## Mechanism
 

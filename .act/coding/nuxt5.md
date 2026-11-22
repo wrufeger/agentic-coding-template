@@ -184,6 +184,9 @@ summary: the full check chain, the type error list compared rather than counted,
   closes; application code does not reach the response. Plain CLI output without the interface avoids it. Investigate
   only if it also shows in the production build or grows with a stream's lifetime. Drops once the warning no longer
   appears in `nuxt dev` on a current nightly.
+- A build warning `INEFFECTIVE_DYNAMIC_IMPORT` (a module is imported both statically and dynamically, so the dynamic
+  import makes no chunk of its own) is usually no finding: behavior is the same, only the split is missing. It is a
+  finding when that dynamic import was meant to break an import cycle or to keep code out of the bundle on purpose.
 - `npm ls --all 2>&1 | grep invalid`: fix a stale resolution with `npm update <package>` (with pnpm: `pnpm why
   <package>`, `pnpm update <package>`, under the pnpm line of `CR-nuxt5-channel`); entries already known stand
   in the upgrade log, report only new ones.
