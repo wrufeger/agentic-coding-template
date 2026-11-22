@@ -33,7 +33,7 @@ Details: `topics/feedback.md`.
 
 summary: docs in language-docs whatever the chat language; .act/ English; human text and technical terms untranslated
 
-Everything the assistant writes under `docs/` — journal, questions, tasks, backlog, inbox, proposals,
+Everything the assistant writes under `docs/` — journal, questions, tasks, backlog, inbox,
 new documentation — is in `language-docs` (`docs/ai/config.md`, default `en`), whatever the chat
 language. `.act/` stays English, as does what the mechanism generates (the
 board, the generated parts of `docs/ai/rules.md`); rules and overrides the project adds there are in

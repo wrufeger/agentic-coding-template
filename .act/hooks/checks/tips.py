@@ -25,7 +25,7 @@
 #          Both are silenced together by work that waits for the assistant at session start — inbox
 #          entries answered or marked `triage: open` (session.py's own `waiting`, the single inbox at
 #          docs/ai/inbox/), a feedback reminder due (is_feedback_due() below, called by session.py
-#          separately so it can also fold into its own status line) or ideas to work through. Neither
+#          separately so it can also fold into its own status line) or whiteboard entries to work through. Neither
 #          `output-depth: sparse` (that level shapes the chat, not what the hook says) nor an open todo
 #          or question for the human silences them. Never shown twice in the same session (session_id,
 #          or twice in the same calendar day for `tips: occasionally`).

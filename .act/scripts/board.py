@@ -27,7 +27,9 @@
 #          .act-local/identity.json, never versioned; the session start names it again.
 #
 #          `--identity` sets or changes the identity of this checkout (the short form of the name
-#          given); the session start creates it from `git config user.name` when it is missing.
+#          given); the session start creates it from `git config user.name` when it is missing. A
+#          change renames the whiteboard docs/ai/whiteboard-<former>.md to the new name (unless that is
+#          taken); board files of the former identity stay as they are and are named.
 #
 # Usage:
 #   python .act/scripts/board.py
@@ -987,8 +989,8 @@ def main(argv: list[str]) -> int:
                              "(.act-local/identity.json) while language-chat is auto, then exit")
     parser.add_argument("--identity", metavar="NAME",
                         help="set or change this checkout's identity (the short form of NAME, "
-                             ".act-local/identity.json), keep its other keys, then exit; board and "
-                             "ideas files of a former identity are not renamed")
+                             ".act-local/identity.json), keep its other keys, then exit; the whiteboard of "
+                             "a former identity is renamed, its board files are not")
     parser.add_argument("--shared", action="store_true",
                         help="with `board: shared`: also write the versioned docs/ai/board-<identity>.md "
                              "(act-commit calls it; a plain run never touches that file)")
@@ -1014,9 +1016,19 @@ def main(argv: list[str]) -> int:
         if previous and previous != data["identity"]:
             old_files = [p for p in (root / ".act-local" / f"board-{previous}.md",
                                      root / ".act-local" / f"inbox-{previous}.md",
-                                     root / "docs" / "ai" / f"board-{previous}.md",
-                                     root / "docs" / "ai" / "concept" / f"ideas-{previous}.md")
+                                     root / "docs" / "ai" / f"board-{previous}.md")
                          if p.is_file()]
+            try:
+                import whiteboard
+                renamed = whiteboard.rename_whiteboard(root, previous, data["identity"])
+            except OSError as exc:
+                print(f"board: the whiteboard of the former identity was not renamed ({exc!r}): rename it by hand",
+                      file=sys.stderr)
+                renamed = None
+            if renamed and renamed[2]:
+                print(f"board: renamed {renamed[0]} -> {renamed[1]}")
+            elif renamed:
+                old_files.append(root / renamed[0])
             if old_files:
                 print("board: files of the former identity stay as they are (rename or merge them by hand): "
                       + ", ".join(p.relative_to(root).as_posix() for p in old_files))

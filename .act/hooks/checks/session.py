@@ -28,7 +28,7 @@
 #          session_notes (inbox counts, docs-audit/dependency/compaction hints), session_bridges
 #          (board refresh, bridges), session_update (template awareness, update lookup),
 #          session_scans (dependency scan, act-local-tidy), session_rules (orchestrator rules),
-#          session_context (compact note, identity, topics, ideas, scope). Every name stays
+#          session_context (compact note, identity, topics, whiteboard, scope). Every name stays
 #          reachable as checks.session.<name>.
 
 from __future__ import annotations
@@ -78,8 +78,9 @@ from .session_rules import (
 from .session_context import (
     _EXCERPT_MARK, _IDE_SERVER_EXACT_NAMES, _IDE_SERVER_NAME_HINTS, _TOPIC_SWITCHES, _active_topics,
     _board_excerpt_block, _chat_language_line, _compact_note, _env_override_note, _ide_mcp_connected,
-    _ideas_ensure_notes, _ideas_note, _ideas_pending, _identity_note, _is_ide_server_name, _output_depth_line,
-    _outside_root_note, _package_notes, _same_project_path, _scope_notes, _servers_match_ide_hint, _user_mcp_servers,
+    _identity_note, _is_ide_server_name, _output_depth_line, _outside_root_note, _package_notes,
+    _same_project_path, _scope_notes, _servers_match_ide_hint, _user_mcp_servers, _whiteboard_ensure_notes,
+    _whiteboard_notes, _whiteboard_pending,
 )
 
 __all__ = [
@@ -168,9 +169,9 @@ __all__ = [
     "_human_line",
     "_old_imports_note",
     "_changed_bridge_note",
-    "_ideas_pending",
-    "_ideas_note",
-    "_ideas_ensure_notes",
+    "_whiteboard_pending",
+    "_whiteboard_notes",
+    "_whiteboard_ensure_notes",
     "_compact_note",
     "refresh_session",
 ]
@@ -283,8 +284,8 @@ def _human_line(state: dict) -> Optional[str]:
     open_count = state.get("inbox_open", 0)
     if answered or open_count:
         parts.append(f"inbox: {answered} answered to process, {open_count} open")
-    if state.get("ideas"):
-        parts.append(f"ideas: {state['ideas']} new")
+    if state.get("whiteboard"):
+        parts.append(f"whiteboard: {state['whiteboard']} to process")
     if state.get("old_imports"):
         parts.append("docs/ai/rules.md uses the old import form, see note")
     if state.get("update"):
@@ -414,7 +415,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # topic's own switch (docs/ai/config.md § Logging/Feedback), not this check, decides whether
     # it is active, and its rule file has to be named either way — "session-start-refresh: off"
     # only turns off the bridge/board/rules re-derivation this function does, not topic awareness.
-    # The identity first, so the "ideas" topic below already sees one created now (fresh clone). It is
+    # The identity first, so the "whiteboard" topic below already sees one created now (fresh clone). It is
     # written even when session-start-refresh is "warn" or "off": without it nothing else works.
     try:
         identity_note = _identity_note(root)
@@ -486,11 +487,12 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         if compact_note:
             print(compact_note)
 
-    ideas_rel, ideas_keys = _ideas_pending(root)
-    state["ideas"] = len(ideas_keys)
-    if ideas_keys:
+    board_rel, board_new, board_due, board_check = _whiteboard_pending(root)
+    state["whiteboard"] = len(board_new) + len(board_due)
+    if board_new or board_due or board_check:
         try:
-            print(_ideas_note(ideas_rel, ideas_keys))
+            for board_note in _whiteboard_notes(board_rel, board_new, board_due, board_check):
+                print(board_note)
         except Exception:
             pass  # informational only, must never block the session
 
@@ -552,10 +554,10 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     except Exception:
         state["inbox_open"] = 0
 
-    # The session owner's own ideas file (and the folder README) created on first use — in a
-    # project that predates the ideas files, or for a second person who just joined.
+    # The session owner's own whiteboard (and docs/ai/README.md) created on first use — in a
+    # project that predates the whiteboards, or for a second person who just joined.
     try:
-        for note in _ideas_ensure_notes(root, config, write=(mode == "block")):
+        for note in _whiteboard_ensure_notes(root, config, write=(mode == "block")):
             print(note)
     except Exception:
         pass  # best effort, must never block the session
@@ -845,8 +847,9 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     rules_part = f" · rules: {rules_delivered}{rules_via}" if rules_delivered is not None else ""
     roles_part = f" · role-bridges refreshed: {len(role_frontmatter_changed)}" if mode == "block" and role_frontmatter_changed else ""
     feedback_part = " · feedback due" if feedback_due else ""
-    ideas_part = f" · ideas: {len(ideas_keys)} new" if ideas_keys else ""
-    print(f"[act] branch={branch}{inbox_part}{ideas_part}{feedback_part} · board updated{rules_part}{roles_part}")
+    whiteboard_open = len(board_new) + len(board_due)
+    whiteboard_part = f" · whiteboard: {whiteboard_open} to process" if whiteboard_open else ""
+    print(f"[act] branch={branch}{inbox_part}{whiteboard_part}{feedback_part} · board updated{rules_part}{roles_part}")
     # The board excerpt (`board-at-start`) follows the status line, ahead of the postscript notes
     # and the tip, which stay last. Not after a compaction: _compact_note already names the tasks
     # and their state. Its text is kept apart and put in place by _fit_context, which shortens or
@@ -867,13 +870,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # At most one line, last of all — either a due reminder from docs/ai/local/reminders.md
     # (user's own, always checked first) or a rotated .act/tips.md tip (config.md § Tips),
     # silenced inside tips.session_line() itself by work waiting for the assistant (inbox entries
-    # answered or `triage: open`, feedback due, ideas); `output-depth: sparse` and open todos or
+    # answered or `triage: open`, feedback due, whiteboard entries); `output-depth: sparse` and open todos or
     # questions for the human do not. Same lazy-import-and-swallow pattern as every other sub-step
     # here.
     try:
         from . import tips as _tips
         tip_line = _tips.session_line(payload, root, config,
-                                       waiting + (1 if feedback_due else 0) + len(ideas_keys))
+                                       waiting + (1 if feedback_due else 0) + whiteboard_open)
     except Exception:
         tip_line = None
     # Every write the steps above refused, one line in all. With `.act-local` itself linked act-local-tidy has

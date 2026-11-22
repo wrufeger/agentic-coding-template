@@ -1046,15 +1046,16 @@ def check_unreadable_entries(root: Path) -> list[Finding]:
     ]
 
 
-ORPHAN_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/concept")
+ORPHAN_SCAN_DIRS = ("docs/ai/inbox",)  # everything below
+ORPHAN_SCAN_FLAT = ("docs/ai",)  # only the files directly in it: the whiteboards' images, not the folders below
 
 
 def check_orphan_files(root: Path) -> list[Finding]:
-    """A pasted image or attachment left beside the entries: a non-Markdown file under the inbox or
-    concept folder that no Markdown file under docs/ links. Dot-files (.gitkeep) are left out. Any
+    """A pasted image or attachment left beside the entries: a non-Markdown file under the inbox folder,
+    or directly in docs/ai/ beside the whiteboards, that no Markdown file under docs/ links. Dot-files (.gitkeep) are left out. Any
     Markdown file under docs/ counts as a link, the archive too: a picture an archived entry still
     shows is not left over. `entries.py archive` moves such files along with their entry; this finds
-    what a hand-made move or an unfinished idea take-over left behind."""
+    what a hand-made move or an unfinished whiteboard take-over left behind."""
     docs = root / "docs"
     if not docs.is_dir():
         return []
@@ -1066,11 +1067,12 @@ def check_orphan_files(root: Path) -> list[Finding]:
             continue  # reported by check_unreadable_entries()
         linked |= entries.linked_local_files(text, markdown.parent)
     findings: list[Finding] = []
-    for rel in ORPHAN_SCAN_DIRS:
+    scans = [(rel, True) for rel in ORPHAN_SCAN_DIRS] + [(rel, False) for rel in ORPHAN_SCAN_FLAT]
+    for rel, below in scans:
         base = root / rel
         if not base.is_dir():
             continue
-        for path in sorted(base.rglob("*")):
+        for path in sorted(base.rglob("*") if below else base.glob("*")):
             if (path.is_file() and path.suffix.lower() != ".md" and not path.name.startswith(".")
                     and Path(os.path.normpath(path)) not in linked):
                 findings.append(Finding(
@@ -1643,7 +1645,7 @@ def check_worker_rules(root: Path) -> list[Finding]:
                     message=warning.removeprefix("warning: "))]
 
 
-STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/proposals", "docs/ai/work")
+STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/work")
 _STATUS_FIELD_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
 
 

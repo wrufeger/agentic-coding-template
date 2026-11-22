@@ -79,7 +79,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "i18n_check.py": {"kind": "skill", "skill": "act-check-translations"},
     "id_links_install.py": {"kind": "direct", "note": "optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`"},
     "id_links_lsp.py": {"kind": "direct", "note": "language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand"},
-    "ideas.py": {"kind": "direct", "note": "session start and init call it; run by hand to record entries as processed"},
+    "whiteboard.py": {"kind": "direct", "note": "session start and init call it; run by hand to record entries as processed"},
     "handover.py": {"kind": "skill", "skill": "act-handover"},
     "info.py": {"kind": "skill", "skill": "act-info"},
     "init.py": {"kind": "direct", "note": "`--target` from a project carries its packages resting (`--carry packages`: folder and zip, no lock entry) and loads the packages of the target's own lock; it never activates a resting folder"},

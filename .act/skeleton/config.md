@@ -134,7 +134,8 @@ them in the inbox (`R-human-ask`).
 `quick-capture`: `on` \| `off`. `on` (default; a missing key counts as `on`): a chat message that begins
 with `todo:`, `note:` or `idea:` is filed by the `UserPromptSubmit` hook without a model turn and never
 reaches the model — `todo:` and `note:` as inbox entries marked `triage: open` (the assistant decides
-whom a todo is for, or answers the note), `idea:` as a new section in your `ideas-<identity>.md`
+whom a todo is for, or answers the note), `idea:` as a new section at the end of your whiteboard
+`docs/ai/whiteboard-<identity>.md`
 (`R-human-capture`). `off`: the prefixes mean nothing special. If a message that starts with one of
 the words was meant as an assignment, delete the file the hook names and send it again without the prefix.
 
@@ -398,7 +399,7 @@ installed package whose source has a newer version and asks; `off` leaves packag
 | `archive-compact` | 30d 300 |
 
 A finished task, backlog item or inbox entry is moved to `docs/ai/work/archive/` by `entries.py archive`; nothing is
-deleted there. The same goes for a concept file (`docs/ai/concept/*.md`, `docs/project/concepts/**/*.md`) that is
+deleted there. The same goes for a concept file (`docs/project/concepts/**/*.md`) that is
 decided or built: `entries.py archive <path>` moves it too (links to it follow). `act-compact` later folds the single
 files into their monthly file (`Q-`, `T-`, `B-`, `U-<YYYY-MM>.md`, concepts into `other-<YYYY-MM>.md`) with an overview
 `<YYYY-MM>.md`; only then is the single file gone, and Git still holds its full text. A row `done-entries` that an

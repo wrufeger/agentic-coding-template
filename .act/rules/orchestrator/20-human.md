@@ -29,14 +29,14 @@ always there.
 
 ## `R-human-capture` — Chat prefixes `todo:`, `note:`, `idea:` capture
 
-summary: todo:/note:/idea: becomes an inbox entry or ideas section (hook, else entries.py new --triage); triage: open handled next
+summary: todo:/note:/idea: becomes an inbox entry or a whiteboard section (hook, else entries.py new --triage); triage: open handled next
 
 A chat message that begins with `todo:`, `note:` or `idea:` (any letter case) is a capture, not an
 assignment. With `quick-capture` on (the default) the `UserPromptSubmit` hook files it and the message
 never reaches the model. Where the hook does not run and such a message arrives anyway, file it
 yourself at once, without starting on the todo: `todo:` and `note:` with `entries.py new todo|note
 --triage --for <writer> [--body-file <file>] <title>` (first line of the wording as title, all of it
-as body), `idea:` as a new section at the end of the writer's `docs/ai/concept/ideas-<identity>.md`,
+as body), `idea:` as a new `## <title>` section at the end of the writer's `docs/ai/whiteboard-<identity>.md`,
 text untouched. Answer with one line naming the file. With `quick-capture` off, the prefixes mean
 nothing special.
 

@@ -55,7 +55,7 @@ from typing import Any, Callable, NamedTuple, Optional, TypedDict, Union
 import act_profile
 import actlib
 import entries
-import ideas
+import whiteboard
 import manifest
 import rules
 import security_scan
@@ -3099,17 +3099,17 @@ def step_materialize(
         if created or (root / dest_rel).is_file():
             touched.append(root / dest_rel)
 
-    # The owner's own ideas file (docs/ai/concept/ideas-<identity>.md) and the folder README, if the
-    # skeleton did not bring it. The workspace identity file exists by now (step 4) except under
+    # The owner's own whiteboard (docs/ai/whiteboard-<identity>.md) and docs/ai/README.md, if the
+    # skeleton did not bring them. The workspace identity file exists by now (step 4) except under
     # --plan, where the identity it will get is formed the same way from the owner.
-    owner_identity = ideas.identity(root) or actlib.identity_slug(cfg["owner"])
+    owner_identity = whiteboard.identity(root) or actlib.identity_slug(cfg["owner"])
     # With --plan on a project without a config.md yet, the config gate is skipped so the plan
     # still names the files; a real run never skips it (the skeleton brought config.md by now).
-    for ideas_path, _kind in ideas.ensure(root, owner_identity, plan=plan, skip_config_gate=plan):
+    for board_path, _kind in whiteboard.ensure(root, owner_identity, plan=plan, skip_config_gate=plan):
         verb = "would create" if plan else "created"
-        messages.append(f"{_relative_label(ideas_path, root)}: {verb}")
+        messages.append(f"{_relative_label(board_path, root)}: {verb}")
         if not plan:
-            touched.append(ideas_path)
+            touched.append(board_path)
 
     for key, spec in selected_bridges.items():
         dest = root / spec["dest"]

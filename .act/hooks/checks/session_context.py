@@ -1,5 +1,5 @@
 """Session start, context lines: compact note, identity, environment overrides, output depth, board
-excerpt, chat language, active topics, ideas, the scope and the packages.
+excerpt, chat language, active topics, whiteboard, the scope and the packages.
 
 Split out of session.py, which keeps the entry point and the order of the sub-steps."""
 from __future__ import annotations
@@ -105,7 +105,7 @@ def _identity_note(root: Path) -> Optional[str]:
         return ("[act] `.act-local/identity.json` is unreadable: fix it or run "
                 "`python .act/scripts/board.py --identity <name>`")
     if status == "none":
-        return ("[act] no identity for this checkout (git user.name is not set or has no letter or digit); board, ideas and new "
+        return ("[act] no identity for this checkout (git user.name is not set or has no letter or digit); board, whiteboard and new "
                 "entries need one: ask the human for their name, then run "
                 "`python .act/scripts/board.py --identity <name>`")
     return None
@@ -329,44 +329,54 @@ def _ide_mcp_connected(root: Path) -> bool:
     return False
 
 
-def _ideas_pending(root: Path) -> "tuple[str, list[str]]":
-    """(root-relative path of the session owner's ideas file, its new or changed entries) — see
-    ideas.py; ("", []) when there is no identity, no file, or ideas.py cannot be imported. Imported
-    lazily like `update`/`rules`: a session start never pays for it unless it is reached, and a
-    broken ideas.py must not end the session."""
+def _whiteboard_pending(root: Path) -> "tuple[str, list[str], list[str], list[str]]":
+    """(root-relative path of the session owner's whiteboard, its new or changed entries, its due date
+    reminders, its event reminders to check) — see whiteboard.py; ("", [], [], []) when there is no
+    identity, no file, nothing to report, or whiteboard.py cannot be imported. Imported lazily like
+    `update`/`rules`: a session start never pays for it unless it is reached, and a broken
+    whiteboard.py must not end the session."""
     try:
-        import ideas  # deferred: see the docstring
-        path, keys = ideas.pending(root)
-        if path is None or not keys:
-            return "", []
-        return path.relative_to(root).as_posix(), keys
+        import whiteboard  # deferred: see the docstring
+        path, found = whiteboard.pending(root)
+        if path is None or not found:
+            return "", [], [], []
+        return path.relative_to(root).as_posix(), found.new, found.due, found.check
     except Exception:
-        return "", []
+        return "", [], [], []
 
 
-def _ideas_note(rel: str, keys: list[str]) -> str:
-    """The `[act] ideas:` session note: how many entries are new or changed, the first few titles
-    (ideas.titles_text), and what to do about them."""
-    import ideas  # deferred, as in _ideas_pending
-    return (f"[act] ideas: {len(keys)} new or changed in {rel} — {ideas.titles_text(keys)} — "
-            "process them per the ideas topic, then `python .act/scripts/ideas.py --seen`")
+def _whiteboard_notes(rel: str, new: list[str], due: list[str], check: list[str]) -> list[str]:
+    """The `[act] whiteboard:` session notes, one line for each of: entries new or changed, date reminders
+    that are due, event reminders to check — each with the count, the first few titles
+    (whiteboard.titles_text) and what to do about them."""
+    import whiteboard  # deferred, as in _whiteboard_pending
+    done = "process them per the whiteboard topic, then `python .act/scripts/whiteboard.py --seen`"
+    notes: list[str] = []
+    if new:
+        notes.append(f"[act] whiteboard: {len(new)} new or changed in {rel} — {whiteboard.titles_text(new)} — {done}")
+    if due:
+        notes.append(f"[act] whiteboard: {len(due)} due in {rel} — {whiteboard.titles_text(due)} — {done}")
+    if check:
+        notes.append(f"[act] whiteboard: {len(check)} to check in {rel} — {whiteboard.titles_text(check)} — "
+                     "has the event come? If so, process the entry per the whiteboard topic; if not, leave it")
+    return notes
 
 
-def _ideas_ensure_notes(root: Path, config: dict[str, str], write: bool) -> list[str]:
-    """One note per file ideas.ensure() created for the session owner (or, with write=False, would
-    create): the folder README.md of the ideas files and the owner's own file. Best effort."""
-    import ideas  # deferred, as in _ideas_pending
+def _whiteboard_ensure_notes(root: Path, config: dict[str, str], write: bool) -> list[str]:
+    """One note per file whiteboard.ensure() created for the session owner (or, with write=False, would
+    create): docs/ai/README.md and the owner's own whiteboard. Best effort."""
+    import whiteboard  # deferred, as in _whiteboard_pending
     notes: list[str] = []
     english = actlib.is_english(actlib.language_settings(config)[1])
-    for path, kind in ideas.ensure(root, plan=not write):
+    for path, kind in whiteboard.ensure(root, plan=not write):
         rel = path.relative_to(root).as_posix()
         if not write:
             notes.append(f"[act] note: {rel} would be created (warn mode, not applied)")
         elif kind == "readme":
             extra = "" if english else " — scaffold in English, translate it once (R-work-language)"
-            notes.append(f"[act] note: created {rel} — how the ideas files work{extra}")
+            notes.append(f"[act] note: created {rel} — how the whiteboards work{extra}")
         else:
-            notes.append(f"[act] note: created {rel} — your own ideas file, one `## <title>` section per idea")
+            notes.append(f"[act] note: created {rel} — your own whiteboard, one `## <kind>: <title>` section per entry")
     return notes
 
 
@@ -403,15 +413,15 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
         else:
             path, _origin = resolved
             active.append(("ide", path.relative_to(root).as_posix()))
-    # "ideas" is data-driven too: active while the owner's own ideas file has entries not yet
-    # processed (ideas.py).
-    if "ideas" not in cut_topics and _ideas_pending(root)[1]:
-        resolved = actlib.resolve("rules/topics/ideas.md")
+    # "whiteboard" is data-driven too: active while the owner's own whiteboard has entries to
+    # process, a date reminder due or an event reminder to check (whiteboard.py).
+    if "whiteboard" not in cut_topics and any(_whiteboard_pending(root)[1:]):
+        resolved = actlib.resolve("rules/topics/whiteboard.md")
         if resolved is None:
-            active.append(("ideas", "missing"))
+            active.append(("whiteboard", "missing"))
         else:
             path, _origin = resolved
-            active.append(("ideas", path.relative_to(root).as_posix()))
+            active.append(("whiteboard", path.relative_to(root).as_posix()))
     return active
 
 

@@ -160,7 +160,7 @@
 #                 lines (a changed/unrefreshable bridge, an unresolvable tier/reasoning value, a
 #                 project .act/ pulled in without update.py — each best-effort and independently
 #                 gated, see checks.session.refresh_session()), then the fixed-format status line
-#                 "[act] branch=<name>[ · inbox: <n> waiting][ · ideas: <n> new][ · feedback due] ·
+#                 "[act] branch=<name>[ · inbox: <n> waiting][ · whiteboard: <n> to process][ · feedback due] ·
 #                 board updated[ · rules: <n>][ · role-bridges refreshed: <n>]", then, unless
 #                 `board-at-start` is off, an optional board excerpt ("[act] board excerpt ..." plus the
 #                 board's "Waiting for you" and "Open tasks" sections, about 2,000 characters, a cut
@@ -213,7 +213,7 @@
 #                 Quick capture rides on the same entry: when the first non-blank line starts with
 #                 todo:/note:/idea: (case-insensitive; one regex on the raw prompt, still before any
 #                 import), checks/quick_capture.py files the entries (inbox todo/note with `triage:
-#                 open`, or a section in the own ideas file) and the same {"decision": "block"} line
+#                 open`, or a section in the own whiteboard) and the same {"decision": "block"} line
 #                 reports where; off with `quick-capture: off` in docs/ai/config.md, no identity or
 #                 any error means the prompt goes through untouched.
 #

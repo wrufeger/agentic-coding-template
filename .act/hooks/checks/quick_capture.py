@@ -5,7 +5,7 @@
 #          message that starts with `todo:`, `note:` or `idea:` is filed without a model turn.
 #            todo: -> inbox entry (kind: todo, for: <own identity>, status: open, triage: open)
 #            note: -> inbox entry (kind: note, for: <own identity>, status: open, triage: open)
-#            idea: -> new `## <title>` section at the end of docs/ai/concept/ideas-<identity>.md
+#            idea: -> new `## <title>` section at the end of docs/ai/whiteboard-<identity>.md
 #          Every further line that starts with a prefix opens another entry; lines in between belong
 #          to the entry above. Text before the first prefix means: no capture, the message goes on
 #          to the model unchanged. dispatch.py checks a cheap prefix pattern on
@@ -76,12 +76,12 @@ def capture(root: Path, payload: dict) -> Optional[str]:
     try:
         import actlib
         import entries
-        import ideas
+        import whiteboard
 
         if actlib.read_config(root).get("quick-capture", "on").strip().strip("`").lower() == "off":
             return None
         parsed = parse_entries(prompt)
-        identity = ideas.identity(root)
+        identity = whiteboard.identity(root)
         if not parsed or not identity:
             return None
         lines: list[str] = []
@@ -92,7 +92,7 @@ def capture(root: Path, payload: dict) -> Optional[str]:
                 # A one-line entry is its own title; repeating it as the body adds nothing.
                 body = "" if text.strip() == title else text
                 if kind == "idea":
-                    path = ideas.append_section(root, title, body)
+                    path = whiteboard.append_section(root, title, body)
                     lines.append(f"[act] captured idea -> {actlib.rel_posix(path, root)}")
                     continue
                 path, entry_id = entries.create_entry(

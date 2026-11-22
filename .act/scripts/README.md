@@ -30,7 +30,6 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `i18n_check.py` | Check a project's translation files for completeness and consistency — the mechanical half of skill `act-check-translations`. Code-only… | skill `act-check-translations` |
 | `id_links_install.py` | One-time, per-machine setup of the clickable entry ids (editor support). Copies the language server and its helper to a per-user folder… | direct (optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`) |
 | `id_links_lsp.py` | Language server that makes entry ids such as T12, B7, Q3 or U5 clickable in Markdown files opened in an editor (VS Code, IntelliJ with an… | direct (language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand) |
-| `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `incidents.py` | The incident log. Hooks and scripts note what went wrong without stopping anyone and that the human should see later: a protected file a… | library |
 | `info.py` | Show, in a compact block, which project this session works in and its state: project name, folder and host, the session name the project… | skill `act-info` |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct (`--target` from a project carries its packages resting (`--carry packages`: folder and zip, no lock entry) and loads the packages of the target's own lock; it never activates a resting folder) |
@@ -56,6 +55,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `unit_copies.py` | tool copies for a project's own skills and roles — a skill written by hand under docs/ai/local/skills/<name>/ gets its copies under… | direct (session start and update.py call it; run by hand to create the copies at once) |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`); names each active package's `requires-template` and a newer zip, fetches no package and runs no package code) |
 | `usage.py` | Local usage counter — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is used… | direct |
+| `whiteboard.py` | The per-person whiteboard `docs/ai/whiteboard-<identity>.md` — one versioned file for every person on a project, written by that person as… | direct (session start and init call it; run by hand to record entries as processed) |
 
 ## Libraries (no CLI, imported only)
 
@@ -401,8 +401,8 @@ options:
   --chat-language CODE  remember the chat language recognized for this person on this machine
                         (.act-local/identity.json) while language-chat is auto, then exit
   --identity NAME       set or change this checkout's identity (the short form of NAME, .act-
-                        local/identity.json), keep its other keys, then exit; board and ideas
-                        files of a former identity are not renamed
+                        local/identity.json), keep its other keys, then exit; the whiteboard of a
+                        former identity is renamed, its board files are not
   --shared              with `board: shared`: also write the versioned docs/ai/board-<identity>.md
                         (act-commit calls it; a plain run never touches that file)
 ```
@@ -506,13 +506,14 @@ positional arguments:
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
     archive             archive a finished task, backlog item or inbox entry, or a concept file
-                        (directly in docs/ai/concept/ or anywhere below docs/project/concepts/),
-                        by moving it to docs/ai/work/archive/ - an inbox entry gets `status:
-                        done`, a task `finished: <timestamp>`, every file `archived: <date>`;
-                        files an entry links beside itself (pasted images) move along, generic or
-                        colliding names get the entry's id in front, links are rewritten; links to
-                        a moved concept in other files follow it; `compact` folds the archive into
-                        monthly files
+                        (anywhere below docs/project/concepts/), by moving it to
+                        docs/ai/work/archive/ - an inbox entry gets `status: done`, a task
+                        `finished: <timestamp>`, every file `archived: <date>`; files an entry
+                        links beside itself (pasted images) move along, generic or colliding names
+                        get the entry's id in front, links are rewritten; links to a moved concept
+                        in other files follow it, and so does its path in backticks below docs/
+                        (not in the journal); what it cannot rewrite is listed as `by hand:`
+                        lines; `compact` folds the archive into monthly files
     compact             merge archived entries older than 7 days (and journal entries) into one
                         collection file per kind and month in docs/ai/work/archive/ (Q-2026-09.md,
                         T-, B-, U-, other-, ledger-), one section per entry with an anchor such as
@@ -629,16 +630,17 @@ options:
 ```text
 usage: entries.py archive [-h] ID-OR-FILE
 
-archive a finished task, backlog item or inbox entry, or a concept file (directly in
-docs/ai/concept/ or anywhere below docs/project/concepts/), by moving it to docs/ai/work/archive/
-- an inbox entry gets `status: done`, a task `finished: <timestamp>`, every file `archived:
-<date>`; files an entry links beside itself (pasted images) move along, generic or colliding names
-get the entry's id in front, links are rewritten; links to a moved concept in other files follow
-it; `compact` folds the archive into monthly files
+archive a finished task, backlog item or inbox entry, or a concept file (anywhere below
+docs/project/concepts/), by moving it to docs/ai/work/archive/ - an inbox entry gets `status:
+done`, a task `finished: <timestamp>`, every file `archived: <date>`; files an entry links beside
+itself (pasted images) move along, generic or colliding names get the entry's id in front, links
+are rewritten; links to a moved concept in other files follow it, and so does its path in
+backticks below docs/ (not in the journal); what it cannot rewrite is listed as `by hand:` lines;
+`compact` folds the archive into monthly files
 
 positional arguments:
   ID-OR-FILE  an id such as Q<n> or T<n>, the entry file's path, or a concept file's path (its
-              bare file name too, if it is unique in the two concept folders)
+              bare file name too, if it is unique in the concept folder)
 
 options:
   -h, --help  show this help message and exit
@@ -823,22 +825,6 @@ stdin/stdout.
 
 options:
   -h, --help  show this help message and exit
-```
-
-## `ideas.py`
-
-Call: direct (session start and init call it; run by hand to record entries as processed)
-
-```text
-usage: ideas.py [-h] [--check | --seen | --ensure]
-
-Entries of the per-person ideas file that are new or changed since they were last processed.
-
-options:
-  -h, --help  show this help message and exit
-  --check     list new or changed entries (default)
-  --seen      record every entry as processed
-  --ensure    create the README.md and own file if missing
 ```
 
 ## `info.py`
@@ -1506,4 +1492,21 @@ options:
   --transcripts-dir DIR
                         with --backfill: the transcript folder to read instead of Claude Code's
                         folder for this project
+```
+
+## `whiteboard.py`
+
+Call: direct (session start and init call it; run by hand to record entries as processed)
+
+```text
+usage: whiteboard.py [-h] [--check | --seen | --ensure]
+
+Entries of the per-person whiteboard that are new or changed, due or to check since they were last
+processed.
+
+options:
+  -h, --help  show this help message and exit
+  --check     list new, changed, due and to-check entries (default)
+  --seen      record every entry as processed
+  --ensure    create docs/ai/README.md and the own whiteboard if missing
 ```

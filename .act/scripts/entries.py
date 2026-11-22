@@ -102,16 +102,24 @@
 #     that leads out of the entry's folder through a symlink is left in place and reported. Relative
 #     links to files that stay are rewritten so they still resolve from the archive; links inside
 #     fenced blocks or inline code are not touched.
-#     A concept file is a Markdown file directly in docs/ai/concept/ or anywhere below
-#     docs/project/concepts/, given by path (or by its bare file name when that is unique in the two
-#     folders). It moves to docs/ai/work/archive/<name>; a file without a front matter gets a minimal one
+#     A concept file is a Markdown file anywhere below docs/project/concepts/, given by path (or by its
+#     bare file name when that is unique there). The README.md of the retired folders docs/ai/concept/ and
+#     docs/ai/proposals/ of older template versions is archived too, by path, as concept-README.md or
+#     proposals-README.md (what the update migration does). A concept moves to
+#     docs/ai/work/archive/<name>; a file without a front matter gets a minimal one
 #     (`archived: <date>` and `file: <original path>`), one with a header only gets `archived:`. Only a `---`
 #     front matter is a concept's header: a first line that merely looks like `Field: value` is prose, it
 #     gets a fresh front matter in front of the untouched text. A name `compact` treats specially (a
 #     collection `Q-|T-|B-|U-|other-|ledger-<YYYY-MM>.md`, a journal `YYYY-MM-DD-*.md`, an overview
 #     `YYYY-MM.md`) is refused: rename the concept first. Links to
 #     it in the other Markdown files of the project (not legacy/, not .act/; a fragment stays) are
-#     rewritten to the archive path, and pasted files it links move along as for an entry. A link
+#     rewritten to the archive path, and pasted files it links move along as for an entry. So is its
+#     project-relative path (docs/project/concepts/<name>.md) written in inline code (backticks), outside
+#     fenced blocks, in the Markdown files below docs/ - except the journal (docs/ai/work/ledger/ and
+#     docs/ai/work/archive/), which keeps the paths it wrote down, and the files at the project root. What
+#     it cannot rewrite is printed as "entries: by hand: <file> ..." lines (at most 20): a file that still
+#     names the old path (plain text, a fenced block), still names the bare file name, or is not UTF-8 and
+#     names the file. Backtick paths are the form `doctor.py` (docs-link-dead) checks. A link
 #     written percent-encoded (`My%20Concept.md`) is found like a plain one; one written in other letter
 #     case only where the file system ignores case (asked of the file system: does the name with its case
 #     swapped open the same file?). A moved file keeps its byte order mark and its line ends (CRLF when
@@ -121,8 +129,9 @@
 #     pathspec can stage every path (a "relinked links to <name> in <path>" line names a file that
 #     links to a moved concept); exit 2 with the reason on stderr, nothing changed, for an unknown id or
 #     file, a name already in the archive, an unreadable file, a folder, a file that is neither an entry
-#     nor a concept, the README.md of a concept folder (its name would collide; archive the parts, then
-#     delete the folder's README by hand), a bare name that is not unique, or an entry that cannot be
+#     nor a concept, the README.md of a concept folder below docs/project/concepts/ (its name would
+#     collide; archive the parts, then delete the folder's README by hand), a bare name that is not unique,
+#     or an entry that cannot be
 #     moved (what was written is removed again); exit 1 when an original could not be removed after the
 #     copy or a link could not be rewritten.
 #   "compact": folds the single files in docs/ai/work/archive/ (and the journal files in
@@ -1164,8 +1173,14 @@ def cmd_check(root: Path) -> int:
 # ---------------------------------------------------------------------------
 
 ARCHIVE_DIR = Path("docs/ai/work/archive")
-CONCEPT_DIR = Path("docs/ai/concept")  # concepts `archive` accepts: *.md directly here ...
-CONCEPTS_DIR = Path("docs/project/concepts")  # ... and *.md anywhere below this folder
+CONCEPTS_DIR = Path("docs/project/concepts")  # concepts `archive` accepts: *.md anywhere below this folder
+# The README.md of two folders older template versions had, archived under a name of its own (README.md would
+# collide with the archive's own README): the update migration that retires the folders calls `archive` for them.
+RETIRED_READMES = {"docs/ai/concept/README.md": "concept-README.md",
+                   "docs/ai/proposals/README.md": "proposals-README.md"}
+# Where the journal keeps the paths it wrote down: backtick paths there are history, not references.
+_JOURNAL_PREFIXES = ("docs/ai/work/ledger/", "docs/ai/work/archive/")
+_BY_HAND_MAX = 20
 
 # A Markdown inline link or image: `[text](target "title")` / `![alt](<target with spaces>)`. Groups:
 # opener `[` or `![`, the text (which may hold one nested `[...]`, as in `[![a](x.png)](x.png)`), `](`,
@@ -1344,21 +1359,27 @@ def _set_header_field(text: str, key: str, value: str) -> str:
 
 
 def _concept_files(root: Path) -> list[Path]:
-    """Every Markdown file `archive` accepts as a concept: directly in docs/ai/concept/, or anywhere
-    below docs/project/concepts/."""
+    """Every Markdown file `archive` accepts as a concept by its bare name: anywhere below
+    docs/project/concepts/."""
     found: list[Path] = []
-    if (root / CONCEPT_DIR).is_dir():
-        found += sorted((root / CONCEPT_DIR).glob("*.md"))
     if (root / CONCEPTS_DIR).is_dir():
         found += sorted((root / CONCEPTS_DIR).rglob("*.md"))
     return [path for path in found if path.is_file()]
 
 
+def _retired_readme_name(root: Path, path: Path) -> Optional[str]:
+    """The archive name of `path` when it is the README.md of a retired folder (RETIRED_READMES), else None."""
+    for rel, name in RETIRED_READMES.items():
+        if os.path.normcase(os.path.normpath(path)) == os.path.normcase(os.path.normpath((root / rel).resolve())):
+            return name
+    return None
+
+
 def _is_concept(root: Path, path: Path) -> bool:
-    """Whether the resolved `path` is a concept file (see _concept_files)."""
+    """Whether the resolved `path` is a concept file (see _concept_files) or a retired folder's README."""
     if path.suffix.lower() != ".md":
         return False
-    return path.parent == (root / CONCEPT_DIR).resolve() or (root / CONCEPTS_DIR).resolve() in path.parents
+    return _retired_readme_name(root, path) is not None or (root / CONCEPTS_DIR).resolve() in path.parents
 
 
 def _refuse_concept_readme(ref: str) -> ArchiveError:
@@ -1368,8 +1389,8 @@ def _refuse_concept_readme(ref: str) -> ArchiveError:
 
 def _find_archivable(root: Path, ref: str) -> Path:
     """The file for an id ("Q<n>") or a path: an entry directly in the tasks, backlog or inbox folder, or
-    a concept (a Markdown file directly in docs/ai/concept/ or anywhere below docs/project/concepts/). A
-    bare file name is looked up in the two concept folders and must be unique there."""
+    a concept (a Markdown file anywhere below docs/project/concepts/, or the README.md of a retired folder,
+    by path). A bare file name is looked up in the concept folder and must be unique there."""
     folders = [root / KIND_DIR["task"], root / KIND_DIR["backlog"], root / actlib.INBOX_DIR]
     candidate = Path(ref)
     if candidate.suffix.lower() == ".md" or candidate.exists():
@@ -1381,13 +1402,12 @@ def _find_archivable(root: Path, ref: str) -> Path:
                 if any(resolved.parent == folder.resolve() for folder in folders):
                     return resolved
                 if _is_concept(root, resolved):
-                    if resolved.name.lower() == "readme.md":
+                    if resolved.name.lower() == "readme.md" and _retired_readme_name(root, resolved) is None:
                         raise _refuse_concept_readme(ref)
                     return resolved
                 raise ArchiveError(f"{ref}: not directly in docs/ai/work/tasks, docs/ai/work/backlog or "
-                                   f"{actlib.INBOX_DIR.as_posix()}, and not a concept file (directly in "
-                                   f"{CONCEPT_DIR.as_posix()}, or below {CONCEPTS_DIR.as_posix()}) - "
-                                   "only those are archived")
+                                   f"{actlib.INBOX_DIR.as_posix()}, and not a concept file (below "
+                                   f"{CONCEPTS_DIR.as_posix()}) - only those are archived")
         if candidate.name == ref:  # a bare file name: look in the concept folders
             named = [path for path in _concept_files(root) if path.name.casefold() == ref.casefold()]
             if named and ref.lower() == "readme.md":
@@ -1439,6 +1459,7 @@ class ArchivePlan:
     outside: list[tuple[Path, Path]] = field(default_factory=list)  # (link, real file) left in place
     concept: bool = False  # a concept file, not a task, backlog item or inbox entry
     incoming: dict[Path, str] = field(default_factory=dict)  # concept only: other file -> its text with the links to it moved
+    old_rel: str = ""  # concept only: the project-relative path it had
     bom: bool = False  # the file starts with a byte order mark: the archived copy keeps it
     newline: str = "\n"  # the file's line ends ("\r\n" when most are): the archived copy keeps them
 
@@ -1479,7 +1500,7 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> Archi
     if text is None:
         raise ArchiveError(f"{_rel(entry, root)}: cannot be read as UTF-8")
     archive = root / ARCHIVE_DIR
-    dest = archive / entry.name
+    dest = archive / (_retired_readme_name(root, entry) or entry.name)
     if dest.exists():
         raise ArchiveError(f"{_rel(dest, root)} already exists")
     entry_id = _entry_id(text)
@@ -1571,6 +1592,7 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> Archi
     else:
         plan.text = _set_header_field(plan.text, "archived", archived_on)
     if plan.concept:
+        plan.old_rel = _rel(entry, root)
         plan.incoming = _incoming_links(root, entry, dest)
     return plan
 
@@ -1591,12 +1613,45 @@ def _mentions(texts: list[str], name: str, ignore_case: bool = False) -> bool:
     return any(name in text for text in texts)
 
 
+def _path_pattern(old_rel: str) -> "re.Pattern[str]":
+    """The project-relative path `old_rel` as a whole path: not the tail of a longer one, not the start of a
+    longer name (the pattern move_doc.py uses for the paths it follows)."""
+    return re.compile(r"(?<![\w./\-])" + re.escape(old_rel) + r"(?![\w\-]|\.\w)")
+
+
+def _rewrite_code_paths(text: str, pattern: "re.Pattern[str]", new_rel: str) -> str:
+    """`text` with the path `pattern` finds replaced by `new_rel` inside inline code (backticks) on lines
+    outside fenced blocks - the form doctor.py's docs-link-dead check reads."""
+    out: list[str] = []
+    fence: actlib.FenceState = None
+    for line in text.split("\n"):
+        was_fenced, fence = fence is not None, actlib.fence_step(fence, line)
+        if was_fenced or fence is not None:
+            out.append(line)
+            continue
+        out.append(_CODE_SPAN_RE.sub(lambda code: pattern.sub(lambda _m: new_rel, code.group(0)), line))
+    return "\n".join(out)
+
+
+def _keeps_old_paths(markdown: Path, root: Path) -> bool:
+    """True for a file whose written project paths stay: not below docs/, at the project root, or in the journal."""
+    try:
+        rel = markdown.relative_to(root).as_posix()
+    except ValueError:
+        return True
+    return not rel.startswith("docs/") or rel.startswith(_JOURNAL_PREFIXES)
+
+
 def _incoming_links(root: Path, old: Path, new: Path) -> dict[Path, str]:
     """For a concept file that moves from `old` to `new`: every other Markdown file of the project that links
-    to it (not legacy/, not .act/) -> its text with those links pointing at `new`. Links in code are
-    untouched; a fragment stays. A link written percent-encoded (`My%20Concept.md`) is found as well, and
-    - only where the file system ignores letter case - one written in other case."""
+    to it (not legacy/, not .act/) -> its text with those links pointing at `new`. A fragment stays. A link
+    written percent-encoded (`My%20Concept.md`) is found as well, and - only where the file system ignores
+    letter case - one written in other case. Links in code are untouched, but the project-relative path of
+    `old` written in inline code (backticks, outside fenced blocks) follows, in the files below docs/ except
+    the journal (_keeps_old_paths)."""
     ignore_case = _fs_ignores_case(old)
+    pattern = _path_pattern(_rel(old, root))
+    new_rel = _rel(new, root)
 
     def path_key(path: Path) -> str:
         key = os.path.normcase(os.path.normpath(path))
@@ -1623,9 +1678,41 @@ def _incoming_links(root: Path, old: Path, new: Path) -> dict[Path, str]:
                 return None
 
         text = _rewrite_links(raw, markdown.parent, mapper)
+        if not _keeps_old_paths(markdown, root):
+            text = _rewrite_code_paths(text, pattern, new_rel)
         if text != raw:
             changed[markdown] = text
     return changed
+
+
+def _left_for_hand(root: Path, old: Path, old_rel: str) -> list[str]:
+    """After a concept moved: the files below docs/ (not the journal) that still name it and that `archive` did
+    not rewrite - one line each: the old path (plain text, a fenced block), the bare file name outside any
+    path or link (not for a README.md: every folder has one), a file that is not UTF-8 and names it. At
+    most _BY_HAND_MAX lines."""
+    name = old.name
+    path_pattern = _path_pattern(old_rel)
+    bare_pattern = re.compile(r"(?<![\w.\-/])(?<!\]\()(?<!\]\(<)" + re.escape(name) + r"(?![\w\-])")
+    found: list[str] = []
+    for markdown in _walk_markdown(root):
+        if _keeps_old_paths(markdown, root):
+            continue
+        try:
+            raw = markdown.read_bytes()
+        except OSError:
+            continue
+        shown = _rel(markdown, root)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            if name.encode("utf-8") in raw:
+                found.append(f"{shown} is not UTF-8 and names {name} - check it")
+            continue
+        if path_pattern.search(text):
+            found.append(f"{shown} still names {old_rel} - check it")
+        elif name.lower() != "readme.md" and bare_pattern.search(text):
+            found.append(f"{shown} still names {name} without a folder - check it")
+    return found[:_BY_HAND_MAX]
 
 
 def _open_entries_naming_task(root: Path, task_id: str) -> list[tuple[str, str]]:
@@ -1716,6 +1803,9 @@ def cmd_archive(root: Path, ref: str) -> int:
             status = 1
             continue
         print(f"entries: relinked links to {label} in {_rel(path, root)}")
+    if plan.concept:
+        for line in _left_for_hand(root, entry, plan.old_rel):
+            print(f"entries: by hand: {line}")
     if plan.entry_id and plan.entry_id.startswith("T") and not plan.inbox:
         for other_id, other_title in _open_entries_naming_task(root, plan.entry_id):
             print(f"entries: still open and names {plan.entry_id}: {other_id} {other_title} - "
@@ -2338,16 +2428,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="report a duplicate id or an entry file that isn't valid UTF-8")
 
-    archive_help = ("archive a finished task, backlog item or inbox entry, or a concept file (directly in "
-                    "docs/ai/concept/ or anywhere below docs/project/concepts/), by moving it to "
+    archive_help = ("archive a finished task, backlog item or inbox entry, or a concept file (anywhere "
+                    "below docs/project/concepts/), by moving it to "
                     "docs/ai/work/archive/ - an inbox entry gets `status: done`, a task `finished: <timestamp>`, "
                     "every file `archived: <date>`; files an entry links beside itself (pasted images) move "
                     "along, generic or colliding names get the entry's id in front, links are rewritten; links "
-                    "to a moved concept in other files follow it; `compact` folds the archive into monthly files")
+                    "to a moved concept in other files follow it, and so does its path in backticks below docs/ "
+                    "(not in the journal); what it cannot rewrite is listed as `by hand:` lines; `compact` folds "
+                    "the archive into monthly files")
     p_archive = sub.add_parser("archive", help=archive_help, description=archive_help)
     p_archive.add_argument("entry", metavar="ID-OR-FILE",
                            help="an id such as Q<n> or T<n>, the entry file's path, or a concept file's path "
-                                "(its bare file name too, if it is unique in the two concept folders)")
+                                "(its bare file name too, if it is unique in the concept folder)")
 
     compact_help = ("merge archived entries older than 7 days (and journal entries) into one collection file per "
                     "kind and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one "

@@ -52,6 +52,11 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   docs, docs order); the report names it, and a later run rewrites the report in place unless someone edited it.
 - New `act-doctor` check `inbox-stale` with config key `inbox-stale` in § Inbox (days, default 14, `off` or
   `0`): open inbox entries naming a done or archived task, backlog item or question, and open reports past the limit.
+- A whiteboard per person, `docs/ai/whiteboard-<identity>.md`, replaces the ideas file: a heading names its
+  kind (`Idea:`, `Bug:`, `Note:`, `Reminder <date>:`, `Reminder after <event>:`); notes are never reported.
+  Rules: `docs/ai/README.md`.
+- `entries.py archive` also rewrites backtick paths to an archived concept in the docs (not the journal) and
+  lists what it cannot rewrite under `by hand:`.
 
 ### Changed
 - `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
@@ -77,6 +82,13 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   that file's last commit.
 - `R-work-record-now` asks to bring the open entries a booked answer, a commit or a finished task touches up to
   date in the same step.
+- Update migration 009 moves each ideas file byte for byte to the whiteboard, concept pages to
+  `docs/project/concepts/` and open rule proposals into inbox questions, retires `docs/ai/concept/` and
+  `docs/ai/proposals/`, and reports what it leaves.
+- `act-adopt` files rule prose as one inbox question per proposal (target, author, old text quoted) instead of
+  a file under `docs/ai/proposals/`; `idea:` writes to the end of the own whiteboard.
+- `whiteboard.py` and the topic `whiteboard` replace `ideas.py` and the topic `ideas`; `board.py --identity`
+  renames the former whiteboard, `doctor` looks for orphan images beside the whiteboards in `docs/ai/`.
 
 ### Fixed
 - `act-deps` no longer asks for a red commit: a change a version bump forces shares the bump's commit only when

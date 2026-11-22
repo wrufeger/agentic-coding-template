@@ -1366,7 +1366,7 @@ REFDEF_RE = re.compile(r"^( {0,3}\[[^\]]+\]:[ \t]*<?)([^\s<>]+)()")  # a referen
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")          # a fence line: its character and length count
 CODE_SPAN_RE = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)")     # an inline code span: a run of N backticks, closed by N
 INDENTED_RE = re.compile(r"^(?: {4}|\t)")               # indented code (or a deeply nested list: left as it is)
-SUCCESSOR_SKIP = ("docs/ai/inbox/", "docs/ai/proposals/")  # side outputs of an adopt row, never its successor
+SUCCESSOR_SKIP = ("docs/ai/inbox/",)  # side outputs of an adopt row (an inbox entry), never its successor
 AMBIGUOUS = "\0ambiguous"  # successors(): an adopt row naming more than one main target
 
 

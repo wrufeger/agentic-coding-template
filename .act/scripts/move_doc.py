@@ -7,7 +7,9 @@
 #            1. Plans first: lists the move, every file whose references it would rewrite and every
 #               line it would move between index files. Writes nothing without --apply.
 #            2. Moves the file or folder (os.replace; the destination must not exist, its folder is
-#               created). Nothing under docs/ai/ is moved and nothing outside docs/.
+#               created). Nothing under docs/ai/ is moved and nothing outside docs/ - except a file out of
+#               docs/ai/concept/, the retired folder of the per-person ideas files, which may go to a place
+#               below docs/ (the update migration that retires the folder does this).
 #            3. Rewrites relative Markdown links and <img src> targets in every Markdown file under
 #               docs/ (docs/ai/work/ledger/ and docs/ai/work/archive/ excepted: the journal keeps old
 #               paths) and in the Markdown files at the project root, outside code blocks and code
@@ -71,6 +73,8 @@ def _check_places(root: Path, source: Path, dest: Path) -> None:
             rel = path.relative_to(docs)
         except ValueError:
             raise MoveError(f"{label}: {path} is not below docs/") from None
+        if label == "from" and rel.parts[:2] == ("ai", "concept") and len(rel.parts) > 2:
+            continue  # a leftover of the retired folder may leave it (the destination is still checked)
         if not rel.parts or rel.parts[0] == "ai":
             raise MoveError(f"{label}: {_posix(path, root)} is {'docs/ itself' if not rel.parts else 'under docs/ai/'}"
                             " — documents there have their own tools (entries.py)")
@@ -118,7 +122,7 @@ def _new_target(old_resolved: Path, moved: dict[Path, Path], source: Path, dest:
 
 
 def _path_pattern(old_rel: str) -> "re.Pattern[str]":
-    return re.compile(r"(?<![\w./\-])" + re.escape(old_rel) + r"(?![\w\-]|\.\w)")
+    return entries._path_pattern(old_rel)  # the one pattern `entries.py archive` follows paths with too
 
 
 def _rewrite_text(text: str, file_old: Path, file_new: Path, moved: dict[Path, Path], source: Path, dest: Path,

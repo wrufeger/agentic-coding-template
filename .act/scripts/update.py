@@ -1393,7 +1393,7 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # functions the new init.py calls — and, being cached, board's older copy under it. "unit_copies"
 # imports init the same way, so a cached copy of it would keep the older init bound. "advisory" is
 # imported by board (and entries, through board), so the same holds for it.
-_PROBE_MODULE_NAMES = ("act_profile", "actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board",
+_PROBE_MODULE_NAMES = ("act_profile", "actlib", "rules", "init", "tiers", "frontmatter", "whiteboard", "entries", "board",
                        "unit_copies", "advisory")
 
 

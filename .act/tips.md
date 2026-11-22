@@ -54,8 +54,9 @@ instead — faster than reading every rules file by hand.
 
 ### TIP-proposals
 when: always
-Anyone can drop a change proposal into `docs/ai/proposals/` (target: rules, coding, checklists or
-config) without needing write access to the file itself — the owner reviews and integrates it.
+Anyone can write a change proposal (rules, coding, checklists or config) as a section into their own
+whiteboard, `docs/ai/whiteboard-<identity>.md`, without needing write access to the file itself — the
+assistant turns it into an inbox question for the owner, who reviews and integrates it.
 
 ### TIP-act-overview
 when: always

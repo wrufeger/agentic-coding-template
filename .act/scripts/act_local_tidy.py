@@ -104,7 +104,8 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "template-dev",             # marker: this checkout builds the template (init.py refuses to convert it)
     "identity.json", "cache.json", "last-applied.json",        # actlib.py
     "tips.json", "usage.json", "context-hint.json",            # hooks/checks/tips.py, usage.py, context_hint.py
-    "ideas-seen.json", "tier-proposals.json",                  # ideas.py, doctor.py
+    "whiteboard-seen.json", "ideas-seen.json",                 # whiteboard.py (ideas-seen.json: its former name)
+    "tier-proposals.json",                                     # doctor.py
     "refusal-proposals.json",   # doctor.py: the day a question about a refusing check was last filed
     "outside-root-note.json",   # hooks/checks/session.py
     "session-start.txt",        # hooks/checks/session.py: the whole session-start output

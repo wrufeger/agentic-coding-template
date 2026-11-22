@@ -7,17 +7,18 @@
 #          question/todo/report/note through entries.py's own validate_entry()/create_entry() (the
 #          same files `entries.py new` writes; "question"/"todo"/"report"/"note" all land under
 #          docs/ai/inbox/ now — "question" keeps its `Q<n>`, "todo" its `U<n>`
-#          id, report and note never carry one), "proposal" through its own write_proposal() below
-#          (proposals are not one of entries.py's kinds: no id, filed straight under
-#          docs/ai/proposals/ with the header its own README asks for). "inbox" is accepted as an
+#          id, report and note never carry one), "proposal" as one inbox question each through
+#          proposal_question() below (a proposal is not one of entries.py's kinds, so the batch
+#          names no id: the question gets the next free one; its text names target and author and
+#          quotes the old wording). "inbox" is accepted as an
 #          old-batch alias for "todo" (normalized before anything else runs) so a batch written
 #          against the old format still works. It decides nothing: on the first doubt the whole
 #          batch is refused and nothing is written.
 #          Old ids of the kind's own scheme are kept ("id"); any other old number goes into
 #          "formerly" and the entry gets the next free id (solo) or none yet (team) — a proposal
 #          never has an id either way. The body is written exactly as given, so the human's wording
-#          survives byte for byte; a name collision on disk (proposal or any other kind) never
-#          overwrites, entries.py's own _create_unique() appends a numeric suffix instead.
+#          survives byte for byte (a proposal's wording is quoted whole); a name collision on disk
+#          never overwrites, entries.py's own _create_unique() appends a numeric suffix instead.
 #          Afterwards <target>/.act-local/adopt/entries-map.json says which new file came from which
 #          source (path and line), so the skill can fill in the adoption table's targets and "done".
 #          Stdlib only.
@@ -42,8 +43,8 @@
 #   author     free text for the header                (proposal only; default: see below)
 # Unknown keys are refused, so a misspelt field is never dropped silently. "target"/"author" on
 # anything but a proposal, "id"/"status"/"for" on a proposal, or "formerly"/"status"/"for"/"target"/
-# "author"/"body"/"body_file" on a reserved item are refused the same way — a proposal never
-# carries an id, and docs/ai/proposals/README.md's header has no room for them; a reserved item
+# "author"/"body"/"body_file" on a reserved item are refused the same way — a proposal's question
+# gets its id, status and recipient (all) from the script; a reserved item
 # writes no file at all, only its id.
 # "ledger" is deliberately not a kind here: a journal/protocol source is always a `log` row in the
 # adoption table (action "legacy"), never reinterpreted as a new entry.
@@ -83,7 +84,6 @@ FIELDS = {"kind", "title", "source", "id", "formerly", "body", "body_file", "sta
           "target", "author"}
 PROPOSAL_KIND = "proposal"
 PROPOSAL_TARGETS = {"rules", "coding", "checklists", "config"}
-PROPOSAL_DIR = Path("docs/ai/proposals")
 RESERVED_KIND = "reserved"
 RESERVED_ONLY_FIELDS = {"formerly", "status", "for", "target", "author", "body", "body_file"}
 # The kinds this batch format accepts (usage comment above, "kind" row) — deliberately narrower
@@ -197,20 +197,40 @@ def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
     return new
 
 
-def write_proposal(root: Path, item: dict) -> Path:
-    """Write one proposal file under docs/ai/proposals/ — not one of entries.py's own kinds (no
-    id, no KIND_DIR entry): the skeleton's own docs/ai/proposals/README.md asks for a header
-    (frontmatter, like every other entry) naming author, date and target, one file per proposed
-    change; readers accept the older plain form too. Reuses entries.py's own
-    _slugify()/_create_unique() so a name collision never overwrites an existing file — a numeric
-    suffix is appended instead, same as every other kind here."""
-    entry_dir = root / PROPOSAL_DIR
-    entry_dir.mkdir(parents=True, exist_ok=True)
-    today = date.today().isoformat()
-    header = actlib.format_header([f"author: {item['author']}", f"date: {today}", f"target: {item['target']}"],
-                                  actlib.writes_frontmatter(PROPOSAL_KIND))
-    text = header + f"\n# {item['title']}\n\n" + item["body"]
-    return entries._create_unique(entry_dir, f"{today}-{entries._slugify(item['title'])}.md", text)
+_PROPOSAL_PLACES = {"rules": "`docs/ai/rules.md`", "coding": "`docs/project/coding_rules.md`",
+                    "checklists": "`docs/ai/local/checklists/`", "config": "`docs/ai/config.md`"}
+
+
+def proposal_question(root: Path, item: dict) -> tuple[str, str]:
+    """(title, body) of the inbox question a proposal becomes: one per proposal, the target and the author named,
+    the old wording quoted whole below, and the choice between taking it over and leaving it out. The body ends
+    with a blank line, so entries.create_entry(answer_block=True) puts the answer label right below it."""
+    language = actlib.docs_language(root)
+
+    def loc(en: str, de: str) -> str:
+        return actlib.localized(language, en, de)
+
+    target, author = item["target"], item["author"]
+    place = _PROPOSAL_PLACES.get(target, target)
+    wording = (item["body"] or "").strip("\n") or item["title"]
+    old = "\n".join(f"> {line}" if line.strip() else ">" for line in wording.split("\n"))
+    title = loc(f"Take over into {target}: {item['title']}", f"In {target} übernehmen: {item['title']}")
+    lines = [
+        loc(f"Proposed change for `{target}` ({place}), from {author}. Take it over?",
+            f"Vorgeschlagene Änderung für `{target}` ({place}), von {author}. Übernehmen?"),
+        "",
+        loc("The old text, unchanged:", "Der alte Text, unverändert:"),
+        "",
+        old,
+        "",
+        "- **a)** " + loc(f"(Recommended) Take it over into {place}. Effort: a few minutes to put it in the right place.",
+                          f"(Empfehlung) In {place} übernehmen. Aufwand: einige Minuten, bis es an der richtigen "
+                          "Stelle steht."),
+        "",
+        "- **b)** " + loc("Leave it out. Effort: none.", "Weglassen. Aufwand: keiner."),
+        "",
+    ]
+    return title, "\n".join(lines) + "\n"
 
 
 TITLE_MAX = 80
@@ -299,7 +319,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             for forbidden in ("id", "status", "for"):
                 if raw.get(forbidden) is not None:
                     problems.append(f"{where}: {forbidden!r}: a proposal never takes one "
-                                    "(docs/ai/proposals/README.md's header has no room for it)")
+                                    "(its question gets id, status and recipient from the script)")
             if raw.get("formerly") is not None:
                 problems.append(f"{where}: \"formerly\": a proposal never takes one "
                                 "(its origin is carried by \"author\"/\"source\" instead)")
@@ -373,8 +393,7 @@ def read_map(root: Path) -> dict:
 
 def _strip_volatile(text: str) -> str:
     """Drop the one header line that always differs between two writes of the very same content —
-    a `created:` timestamp (entries.py's create_entry()) or a `date:` line (write_proposal(), which
-    stamps today's date) — so two otherwise-identical texts compare equal below. The `---` lines of
+    a `created:` timestamp (entries.py's create_entry()) or an older proposal's `date:` line — so two otherwise-identical texts compare equal below. The `---` lines of
     a frontmatter header are dropped too, so a file written in the plain form by an earlier run
     still equals the text this run would write."""
     # Header only (actlib.split_header()): the same line inside a body is content. Line endings
@@ -388,13 +407,16 @@ def _strip_volatile(text: str) -> str:
 
 def _expected_text(row: dict, item: dict, root: Optional[Path] = None) -> str:
     """The exact file text this run would produce for `item`, mirroring entries.create_entry()/
-    write_proposal() header-for-header — using the id this row already carries (an explicit
+    proposal_question() header-for-header — using the id this row already carries (an explicit
     `item["id"]` was already checked to match `row["id"]` by the caller; an auto-assigned one keeps
     whatever id the earlier run happened to hand out). A placeholder `created:`/`date:` line is
     included so _strip_volatile() drops it from both this text and the file's real one alike."""
     if item["kind"] == PROPOSAL_KIND:
-        header = f"author: {item['author']}\ndate: PLACEHOLDER\ntarget: {item['target']}\n\n"
-        return header + f"# {item['title']}\n\n" + (item["body"] or "")
+        title, body = proposal_question(root, item)
+        header_lines = [f"id: {row['id']}"] if row.get("id") else []
+        header_lines += ["kind: question", "for: all", "status: open", "created: PLACEHOLDER"]
+        return (actlib.format_header(header_lines, actlib.writes_frontmatter("question"))
+                + "\n" + f"# {title.strip()}\n\n" + body + actlib.answer_label(actlib.docs_language(root)) + "\n")
     # "question"/"todo"/"report"/"note" all now live under docs/ai/inbox/ (actlib.INBOX_KINDS) and
     # carry a `kind:` header line, id/formerly/kind/for/status/created in that exact order -- kept
     # in sync with entries.create_entry() header-for-header, same as the rest of this function.
@@ -522,9 +544,10 @@ def plan_ids(root: Path, items: list[dict], reserved: tuple[str, ...] = ()) -> N
     for item in items:
         if item["id"]:
             item["planned"] = item["id"]
-        elif item["kind"] in entries.KIND_PREFIX and not team:
-            new_id = entries._next_id(root, item["kind"], kept + tuple(extra.get(item["kind"], [])))
-            extra.setdefault(item["kind"], []).append(new_id)
+        elif (item["kind"] in entries.KIND_PREFIX or item["kind"] == PROPOSAL_KIND) and not team:
+            id_kind = "question" if item["kind"] == PROPOSAL_KIND else item["kind"]  # a proposal is a question
+            new_id = entries._next_id(root, id_kind, kept + tuple(extra.get(id_kind, [])))
+            extra.setdefault(id_kind, []).append(new_id)
             item["planned"] = new_id
         else:
             item["planned"] = None
@@ -593,7 +616,8 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
                 print(f"[adopt-entries] {tag} {item['id']} (never reused) <- {_label(item['source'])}")
         for item in order:
             if item["kind"] == PROPOSAL_KIND:
-                dest, written_id = write_proposal(root, item), None
+                title, body = proposal_question(root, item)
+                dest, written_id = entries.create_entry(root, "question", title, body=body, answer_block=True)
             else:
                 dest, written_id = entries.create_entry(root, item["kind"], item["title"], item["id"], item["formerly"],
                                                         item["status"], item["for"], item["body"])

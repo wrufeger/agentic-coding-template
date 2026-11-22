@@ -19,7 +19,8 @@ legacy archive, `archive/legacy/`, and every `README.md` stay as they are).
 - `ledger/` — journal entries, one per step, named `YYYY-MM-DD-<slug>.md`; read by `board.py` for
   the board's recent history.
 - `archive/` — finished business moved out of the three folders above, archived concept files, the journal
-  collections, `legacy/` and `proposals/`; `act-compact` folds the single files; see its own `README.md`.
+  collections, `legacy/` and `proposals/` (rule proposals of older template versions); `act-compact` folds the
+  single files; see its own `README.md`.
 - `reserved-ids.json` — ids that stay taken without an entry file: written by `act-adopt` for old ids it
   takes over without an entry, and by the retired `done-entries: delete` of older template versions;
   `entries.py` no longer writes it, `entries.py new` still reads it so no id is handed out twice. Not edited by
