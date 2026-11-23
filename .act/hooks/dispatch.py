@@ -689,7 +689,7 @@ del _compat_module
 # (_load, _check_failed): refused for a guard in _FAIL_CLOSED, reported for every other check.
 #
 # Order note: worker_cap and status_poll are deliberately
-# the LAST two entries — both can deny based on their own running counter/streak (worker's tool-call
+# the LAST two entries that can deny (worker_run_watch follows them, it only snapshots) — both can deny based on their own running counter/streak (worker's tool-call
 # count, orchestrator's consecutive-poll streak), and that counter/streak must never be bumped for a
 # call another, earlier check goes on to deny anyway (e.g. encoding_hint refusing a worker's Write to
 # a non-UTF-8 file must not also count that call against the worker's cap). Every check ahead of them
@@ -722,6 +722,8 @@ _PRE_TOOL_USE_CHECKS = (
     ("worker_scope_overlap", "check_main_session_overlap"),  # notes, never a refusal: the orchestrator's write under a running worker's Tests:, its test run in a tree a worker writes in
     ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate) — last on purpose, see above
     ("status_poll", "check_status_poll"),                 # repeated status queries (R-cost-wait) — last on purpose, see above
+    ("worker_run_watch", "check_worker_run_watch"),       # never refuses: the snapshot before a worker's call that runs code (worker-run-watch) —
+                                                          # after every check that could refuse, so a refused call takes no snapshot
 )
 
 # PostToolUse / PostToolUseFailure notes, all of them run every time for either event (no "first
@@ -738,6 +740,7 @@ _POST_TOOL_USE_NOTES = (
     ("deps_scan", "note_deps_scan"),          # lower-severity/accepted findings after a commit (security-check)
     ("deps_scan", "note_deps_merge_scan"),    # lock files a merge/pull/cherry-pick brought in -> inbox report (security-check)
     ("worker_scope_overlap", "note_main_session_overlap"),  # the orchestrator's test run beside a worker writing in the tree (R-cost-delegate)
+    ("worker_run_watch", "note_worker_run_watch"),  # what a worker's script or program changed in the repositories (R-role-worker)
 )
 
 # Observers see every hook event and never block: signature observe(event: str, payload: dict) ->
@@ -832,6 +835,7 @@ _CHECK_KEYS = {
     "danger_scan": "security-check", "deps_scan": "security-check", "encoding_hint": "encoding-hint",
     "throwaway_place": "throwaway-place", "commit_hashes": "commit-hashes",
     "worker_scope_overlap": "worker-scope-overlap", "worker_cap": "worker-cap", "status_poll": "status-poll",
+    "worker_run_watch": "worker-run-watch",
 }
 
 

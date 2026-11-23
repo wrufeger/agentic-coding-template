@@ -1200,6 +1200,7 @@ def _build_config_schema() -> dict[str, ConfigKey]:
         add(check, "Checks", values=_MODE3, default="block")
     add("protected-watch", "Checks", values=_MODE3, default="block")
     add("model-switch", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
+    add("worker-run-watch", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("throwaway-place", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("commit-hashes", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("commit-hashes-repos", "Checks", default="none")

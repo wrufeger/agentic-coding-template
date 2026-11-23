@@ -57,6 +57,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   Rules: `docs/ai/README.md`.
 - `entries.py archive` also rewrites backtick paths to an archived concept in the docs (not the journal) and
   lists what it cannot rewrite under `by hand:`.
+- `worker-run-watch` (`warn`, `off` skips it; § Checks of `docs/ai/config.md`) tells a worker and the orchestrator
+  when a script it ran committed, changed a ref or wrote outside every running worker's `Write scope:`. Never refuses.
 
 ### Changed
 - `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
@@ -89,6 +91,11 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   a file under `docs/ai/proposals/`; `idea:` writes to the end of the own whiteboard.
 - `whiteboard.py` and the topic `whiteboard` replace `ideas.py` and the topic `ideas`; `board.py --identity`
   renames the former whiteboard, `doctor` looks for orphan images beside the whiteboards in `docs/ai/`.
+- `worker-git-write` also refuses a worker's `git update-ref`, writing `git symbolic-ref`, tag changes and `git config`
+  writes; reading forms stay free; a `--global`/`--system`/`--file` write is refused even for a folder outside the
+  project.
+- `R-role-worker`: a worker's git probe runs only in a repository of its own under the throwaway folder, and a script
+  it starts writes only where the worker may write itself.
 
 ### Fixed
 - `act-deps` no longer asks for a red commit: a change a version bump forces shares the bump's commit only when

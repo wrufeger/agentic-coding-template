@@ -5,7 +5,10 @@
 #          R-role-worker): a worker only ever reads git (status, diff, log, show) — every subcommand
 #          in _GIT_WRITE_SUBCOMMANDS is a write for this check's purposes, plus `branch` unless it only
 #          lists (_branch_lists_only); `stash` is one too, except `stash list` / `stash show` with plain
-#          words only (_stash_reads_only); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
+#          words only (_stash_reads_only); so are `update-ref` (every form), `symbolic-ref` unless it only reads one
+#          name (_symbolic_ref_reads_only), `tag` unless it only lists or verifies (_tag_lists_only) and `config`
+#          when it writes (_config_writes; a write with `--global`, `--system` or `--file` is never exempt, see
+#          _config_escapes_repo); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
 #          `blame` are never in the write set. Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
@@ -185,9 +188,137 @@ def _stash_reads_only(sub_args: list[str]) -> bool:
     return not any(a.startswith("--ou") or any(c in a for c in "$`\\'\"") for a in sub_args[1:])
 
 
+_SYMBOLIC_REF_READ_FLAGS = frozenset({"-q", "--quiet", "--short", "--no-recurse"})
+_TAG_LIST_FLAGS = frozenset({"-i", "--ignore-case", "--column", "--no-column", "--color", "--no-color"})
+_TAG_LIST_VALUE_FLAGS = ("--contains", "--no-contains", "--points-at", "--merged", "--no-merged", "--sort", "--format")
+_TAG_LISTING_VALUE_FLAGS = frozenset({"--contains", "--no-contains", "--points-at", "--merged", "--no-merged"})
+_TAG_NUM_RE = re.compile(r"-n\d*")
+_CONFIG_WRITE_FLAGS = ("--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section",
+                       "--edit")
+_CONFIG_READ_FLAGS = frozenset({"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color",
+                                "--get-colorbool", "-l", "--list"})
+_CONFIG_VALUE_FLAGS = frozenset({"--file", "-f", "--blob", "--type", "--default", "--comment"})
+_CONFIG_NEW_READ = frozenset({"get", "list"})
+_CONFIG_NEW_WRITE = frozenset({"set", "unset", "rename-section", "remove-section", "edit"})
+_CONFIG_OUTSIDE_LONG = ("--global", "--system", "--file")  # an abbreviation of two characters or more counts
+
+
+def _symbolic_ref_reads_only(sub_args: list[str]) -> bool:
+    """True for `git symbolic-ref <name>` with only `-q`/`--quiet`/`--short`/`--no-recurse`: it reads where a ref
+    points. Two names, `-d`/`--delete`, `-m` and any other word make it a write (an allow-list: an abbreviation of
+    a long option is read as the write it might be)."""
+    names = [arg for arg in sub_args if not arg.startswith("-")]
+    return len(names) == 1 and all(arg in _SYMBOLIC_REF_READ_FLAGS for arg in sub_args if arg.startswith("-"))
+
+
+def _tag_lists_only(sub_args: list[str]) -> bool:
+    """True for a `tag` that only reads: no arguments, or only listing switches (with their values) and, as
+    patterns, bare words only when listing is on: `-l`/`--list`, `-v`/`--verify`, `-n` (with or without a number)
+    or a filter (`--contains`, `--no-contains`, `--points-at`, `--merged`, `--no-merged`) imply it. A write switch
+    (`-d`, `-a`, `-s`, `-u`, `-f`, `-m`, `-F`, `-e`, `--create-reflog`, an abbreviation of a long one or any other
+    word that starts with `-`) or a bare word without listing makes it a write: `git tag v1` creates a tag. A
+    value never starts with `-`, except the key of `--sort` (`--sort -v:refname`), which always takes the next
+    word."""
+    listing, bare, index = False, 0, 0
+    while index < len(sub_args):
+        arg = sub_args[index]
+        index += 1
+        name, equals, _ = arg.partition("=")
+        if arg in ("-l", "--list", "-v", "--verify") or _TAG_NUM_RE.fullmatch(arg):
+            listing = True
+        elif arg in _TAG_LIST_FLAGS or name in ("--column", "--color"):
+            continue
+        elif name in _TAG_LIST_VALUE_FLAGS:
+            listing = listing or name in _TAG_LISTING_VALUE_FLAGS
+            if not equals and index < len(sub_args) and (name == "--sort" or not sub_args[index].startswith("-")):
+                index += 1
+        elif arg.startswith("-"):
+            return False
+        else:
+            bare += 1
+    return bare == 0 or listing
+
+
+def _config_scan(sub_args: list[str]) -> tuple[list[str], bool, bool, bool]:
+    """Reads the words after `config`: (the words that are no switch and no switch's value, a reading switch seen,
+    a write switch seen, a switch naming the user's or the machine's configuration or a file seen). A long switch
+    counts as the write or the file switch it abbreviates (git takes an unambiguous prefix); a short switch may
+    carry its value (`-f../p/x.cfg`) and may sit in a bundle (`-ze` is `-z -e`)."""
+    positional: list[str] = []
+    reading = writing = outside = False
+    index = 0
+    while index < len(sub_args):
+        arg = sub_args[index]
+        index += 1
+        name = arg.partition("=")[0]
+        if arg.startswith("--"):
+            if len(name) > 2 and any(item.startswith(name) for item in _CONFIG_WRITE_FLAGS):
+                writing = True
+            if len(name) > 3 and any(item.startswith(name) for item in _CONFIG_OUTSIDE_LONG):
+                outside = True
+            if arg in _CONFIG_READ_FLAGS:
+                reading = True
+            elif arg in _CONFIG_VALUE_FLAGS:
+                index += 1
+        elif arg.startswith("-"):
+            for position in range(1, len(arg)):
+                char = arg[position]
+                if char == "e":
+                    writing = True
+                elif char == "l":
+                    reading = True
+                elif char == "f":
+                    outside = True
+                    index += 1 if position + 1 == len(arg) else 0  # the value is the next word, or the rest of this one
+                    break
+        else:
+            positional.append(arg)
+    return positional, reading, writing, outside
+
+
+def _config_writes(sub_args: list[str]) -> bool:
+    """True for a `config` that writes: a write switch (`--add`, `--unset`, `--unset-all`, `--replace-all`,
+    `--rename-section`, `--remove-section`, `-e`/`--edit`, also as an abbreviation of a long one or in a bundle of
+    short ones), the new syntax `set`/`unset`/`rename-section`/`remove-section`/`edit`, or a key with a value (two or
+    more words that are neither a switch nor the value of `--file`/`-f`, `--blob`, `--type`, `--default`,
+    `--comment`) unless a reading switch (`--get*`, `-l`/`--list`) or the new syntax `get`/`list` is there. One key
+    alone, `--get`, `--list` read."""
+    positional, reading, writing, _outside = _config_scan(sub_args)
+    if writing:
+        return True
+    if positional and positional[0] in _CONFIG_NEW_WRITE:
+        return True
+    if reading or (positional and positional[0] in _CONFIG_NEW_READ):
+        return False
+    return len(positional) >= 2
+
+
+def _config_escapes_repo(sub_args: list[str]) -> bool:
+    """True for a writing `config` that names the user's or the machine's configuration or a file of its own
+    (`--global`, `--system`, `--file`, `-f`, also abbreviated or with an attached value): it never writes the
+    repository a `-C`/`cd` target stands for, so that target does not make it a throwaway-repository call."""
+    return _config_scan(sub_args)[3] and _config_writes(sub_args)
+
+
+_WRITE_FORM_TEXT = {
+    "update-ref": "changes a ref",
+    "symbolic-ref": "changes where a symbolic ref (HEAD) points",
+    "tag": "creates, changes or deletes a tag; a worker may list tags with `git tag -l`",
+    "config": "writes git configuration; a worker may read it with `git config <key>`, `--get` or `--list`",
+}
+
+
 def _is_git_write_subcommand(subcommand: str, args: list[str]) -> bool:
     if subcommand == "stash":
         return not _stash_reads_only(args)
+    if subcommand == "update-ref":
+        return True
+    if subcommand == "symbolic-ref":
+        return not _symbolic_ref_reads_only(args)
+    if subcommand == "tag":
+        return not _tag_lists_only(args)
+    if subcommand == "config":
+        return _config_writes(args)
     return subcommand in _GIT_WRITE_SUBCOMMANDS or (subcommand == "branch" and not _branch_lists_only(args))
 
 
@@ -323,9 +454,11 @@ def _leading_cd_outside_project(
 
 
 def _worker_git_write_message(subcommand: str) -> str:
+    form = _WRITE_FORM_TEXT.get(subcommand)
     return (
         f"[act] git is read-only for workers (status/diff/log/show, ...) — git {subcommand} "
-        "changes the tree or history (R-role-worker)"
+        + (form if form else "changes the tree or history")
+        + " (R-role-worker)"
     )
 
 
@@ -363,7 +496,8 @@ def check_worker_git_write(payload: dict) -> int:
         if not (alias_defined or _is_git_write_subcommand(subcommand, sub_args)):
             continue
 
-        never_exempt = has_dir_override or _prefix_has_dir_override(prefix)
+        never_exempt = (has_dir_override or _prefix_has_dir_override(prefix)
+                        or (subcommand == "config" and _config_escapes_repo(sub_args)))
         if not never_exempt:
             if leading_cd_outside:
                 continue
