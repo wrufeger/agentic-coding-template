@@ -138,6 +138,8 @@ whom a todo is for, or answers the note), `idea:` as a new section at the end of
 `docs/ai/whiteboard-<identity>.md`
 (`R-human-capture`). `off`: the prefixes mean nothing special. If a message that starts with one of
 the words was meant as an assignment, delete the file the hook names and send it again without the prefix.
+Under GitHub Copilot on Windows the hook does not file anything (Copilot cannot hold a message back): the
+message reaches the model, which files it itself as `R-human-capture` says.
 
 `inbox-stale`: a number of days, `off` or `0` (default `14`). `act-doctor` only, never refuses: it names an
 open inbox entry whose heading or header names a task, backlog item or question that is archived or has

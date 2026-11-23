@@ -254,7 +254,7 @@ import time
 import types
 
 from pathlib import Path  # noqa: E402
-from typing import NamedTuple  # noqa: E402
+from typing import NamedTuple, TextIO  # noqa: E402
 
 # When this hook process began its own work -- every PreToolUse check receives it as
 # payload["_act_hook_started"] (see _run_checks) and caps its own time budget against it
@@ -478,6 +478,12 @@ if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
         _early_payload = {}
     if not isinstance(_early_payload, dict):
         _early_payload = {}
+    try:
+        from checks.common import _normalise_copilot_payload as _normalise_early  # noqa: E402 -- stdlib only
+    except Exception:  # noqa: BLE001 -- a broken checks.common is reported once, by the central import below
+        _normalise_early = None
+    if _normalise_early is not None:  # Copilot's key names, and its `Bash` for PowerShell when ACT_HOOK_HOST says so
+        _normalise_early(_early_payload)
     _early_watch = _watch_protected_files("PostToolUse", _early_payload)
     _early_failures = _take_failure_notes(_early_payload)
     if (not _early_payload.get("agent_id")
@@ -1749,6 +1755,25 @@ def _run_worker_rules(part_arg: str) -> int:
     return 0
 
 
+class _StderrTee:
+    """stderr that also remembers what was written to it: under Copilot a denied PreToolUse call repeats its
+    stderr reason as `permissionDecisionReason` on stdout, because Copilot shows the model only that."""
+
+    def __init__(self, stream: TextIO) -> None:
+        self.stream = stream
+        self._parts: "list[str]" = []
+
+    def write(self, text: str) -> int:
+        self._parts.append(text)
+        return self.stream.write(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def text(self) -> str:
+        return "".join(self._parts)
+
+
 def _report_check_failures(payload: dict, held: str) -> None:
     """A PreToolUse call goes ahead although a check failed (it was skipped, see _check_failed), or with a
     note such as an inline program too large to read (_inline_size_notes): tell the
@@ -1803,18 +1828,37 @@ def main(argv: list[str]) -> int:
         real_stdout = sys.stdout
         held = io.StringIO()
         sys.stdout = held
+        reason_tee = _StderrTee(sys.stderr) if hook_host() == "copilot" else None
         try:
-            result, denied_by = _run_checks(payload)
+            if reason_tee is not None:
+                sys.stderr = reason_tee  # what the checks say on stderr is the denial reason Copilot wants on stdout
+            try:
+                result, denied_by = _run_checks(payload)
+            finally:
+                if reason_tee is not None:
+                    sys.stderr = reason_tee.stream
             _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
         finally:
             sys.stdout = real_stdout
-        _deliver_package_notes(payload, result != 0)
+        if reason_tee is not None:
+            sys.stderr = reason_tee
+        try:
+            _deliver_package_notes(payload, result != 0)
+        finally:
+            if reason_tee is not None:
+                sys.stderr = reason_tee.stream
         if result == 0:
             _CHECK_FAILURES.extend(_inline_size_notes())  # a note, not a failure: same way to the model
+        copilot_deny = result != 0 and reason_tee is not None
         if result == 0 and _CHECK_FAILURES:
             _report_check_failures(payload, held.getvalue())
-        elif held.getvalue():
+        elif held.getvalue() and not copilot_deny:
             sys.stdout.write(held.getvalue())
+        if copilot_deny and reason_tee is not None:
+            # Copilot reads stdout as one JSON document: held text (a warn note) joins the reason instead.
+            parts = (reason_tee.text().strip(), held.getvalue().strip())
+            reason = "\n".join(part for part in parts if part) or f"blocked by an act check (exit code {result})"
+            print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": reason}))
         return result
 
     if event == "UserPromptSubmit":

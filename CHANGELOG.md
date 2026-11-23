@@ -103,6 +103,10 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   it starts writes only where the worker may write itself.
 
 ### Fixed
+- GitHub Copilot on Windows refused every tool call in a project with Claude Code hooks ("hook errored"); the hooks
+  now run there, and a denial shows its reason.
+- Under Copilot the hooks do not check edits made through its `apply_patch` tool, and a project with only `copilot` in
+  `tools` has no hooks yet.
 - `act-deps` no longer asks for a red commit: a change a version bump forces shares the bump's commit only when
   the bump alone would turn a check red.
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is

@@ -6,6 +6,13 @@ a command (parser allow-lists, time budgets, failure handling) is documented at 
 (header comment of the module); the block messages name the syntax and point here. The checks are switched in
 `docs/ai/config.md` § Checks (`block`, `warn` or `off`).
 
+**Hook command.** Each hook entry in `.claude/settings.json` has a `command` in Bash form that starts
+`.act/hooks/dispatch.py` and also a `powershell` form for GitHub Copilot on Windows (for `UserPromptSubmit` it
+starts nothing). The dispatcher always reads Copilot's keys (`path`, `file_text`, `old_str`, `new_str`) where
+Claude Code's are missing; the `powershell` form sets `ACT_HOOK_HOST=copilot`, and then Copilot's key wins over a
+Claude Code key, its shell tool reported as `Bash` is judged as `PowerShell`, and a denial reason goes to standard
+output as well.
+
 **Incident log.** Only real faults are noted in `.act-local/incidents.jsonl` (time, kind, source, role, a short message;
 never a command or a path):
 

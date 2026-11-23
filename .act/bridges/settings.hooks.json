@@ -15,6 +15,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then echo \"[act] Python 3.9+ not found - the template's hooks are inactive (see README)\"; exit 0; fi; if [ ! -f \"$D\" ]; then echo \"[act] .act/hooks/dispatch.py not found - the template's hooks are inactive\"; exit 0; fi; $P \"$D\" SessionStart; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { Write-Output '[act] Python 3.9+ not found - the template''s hooks are inactive (see README)'; exit 0 }; if (-not (Test-Path -LiteralPath $D)) { Write-Output '[act] .act/hooks/dispatch.py not found - the template''s hooks are inactive'; exit 0 }; & $P @A $D SessionStart; exit 0",
             "timeout": 15
           }
         ]
@@ -28,6 +29,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" PreToolUse",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D PreToolUse; exit $LASTEXITCODE",
             "timeout": 10
           }
         ]
@@ -39,6 +41,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" PreToolUse",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D PreToolUse; exit $LASTEXITCODE",
             "timeout": 10
           }
         ]
@@ -50,6 +53,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" PreToolUse",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D PreToolUse; exit $LASTEXITCODE",
             "timeout": 10
           }
         ]
@@ -63,6 +67,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" PostToolUse; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D PostToolUse; exit 0",
             "timeout": 10
           }
         ]
@@ -75,6 +80,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart; exit 0",
             "timeout": 10
           }
         ]
@@ -85,6 +91,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 1; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 1; exit 0",
             "timeout": 10
           }
         ]
@@ -95,6 +102,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 2; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 2; exit 0",
             "timeout": 10
           }
         ]
@@ -105,6 +113,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 3; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 3; exit 0",
             "timeout": 10
           }
         ]
@@ -115,6 +124,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 4; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 4; exit 0",
             "timeout": 10
           }
         ]
@@ -125,6 +135,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 5; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 5; exit 0",
             "timeout": 10
           }
         ]
@@ -135,6 +146,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 6; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 6; exit 0",
             "timeout": 10
           }
         ]
@@ -145,6 +157,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 7; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 7; exit 0",
             "timeout": 10
           }
         ]
@@ -155,6 +168,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 8; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 8; exit 0",
             "timeout": 10
           }
         ]
@@ -165,6 +179,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 9; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 9; exit 0",
             "timeout": 10
           }
         ]
@@ -175,6 +190,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 10; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 10; exit 0",
             "timeout": 10
           }
         ]
@@ -185,6 +201,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 11; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 11; exit 0",
             "timeout": 10
           }
         ]
@@ -195,6 +212,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStart --worker-rules 12; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStart --worker-rules 12; exit 0",
             "timeout": 10
           }
         ]
@@ -207,6 +225,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SubagentStop; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SubagentStop; exit 0",
             "timeout": 10
           }
         ]
@@ -219,6 +238,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" Stop; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D Stop; exit 0",
             "timeout": 10
           }
         ]
@@ -231,12 +251,14 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" UserPromptSubmit --act-check; true",
+            "powershell": "exit 0",
             "timeout": 10
           },
           {
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" UserPromptSubmit; true",
+            "powershell": "exit 0",
             "timeout": 10,
             "async": true
           }
@@ -250,6 +272,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" PostToolUseFailure; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D PostToolUseFailure; exit 0",
             "timeout": 10
           }
         ]
@@ -262,6 +285,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" Notification; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D Notification; exit 0",
             "timeout": 10,
             "async": true
           }
@@ -275,6 +299,7 @@
             "type": "command",
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; $P \"$D\" SessionEnd; true",
+            "powershell": "$env:ACT_HOOK_HOST='copilot'; $D = '.act/hooks/dispatch.py'; if ($env:CLAUDE_PROJECT_DIR) { $D = Join-Path $env:CLAUDE_PROJECT_DIR '.act/hooks/dispatch.py' }; if (-not (Test-Path -LiteralPath $D)) { exit 0 }; $P = $null; $A = @(); foreach ($n in @('py','python3','python')) { if ($P) { break }; $x = @(); if ($n -eq 'py') { $x = @('-3') }; foreach ($c in @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue)) { if ($P) { break }; try { & $c.Source @x -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $P = $c.Source; $A = $x } } catch { } } }; if (-not $P) { exit 0 }; & $P @A $D SessionEnd; exit 0",
             "timeout": 10,
             "async": true
           }

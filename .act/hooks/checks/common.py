@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 __all__ = [
-    "_read_payload", "_check_mode", "_TOOL_PATH_FIELDS", "_WORKER_TOOL_NAMES",
+    "_read_payload", "_normalise_copilot_payload", "hook_host", "_check_mode", "_TOOL_PATH_FIELDS", "_WORKER_TOOL_NAMES",
     "_SHELL_TOOL_NAMES", "_shell_command", "_is_worker",
     "_HARNESS_MESSAGE_PREFIXES", "_is_harness_message",
     "_load_pending_notes", "_queue_pending_note", "_pop_pending_notes", "_hook_deadline", "_HOOK_BUDGET",
@@ -56,6 +56,51 @@ def _unplaced_reason(target: str) -> str:
     return target[len(_UNPLACED_PREFIX):-1] if _is_unplaced_target(target) else target
 
 
+# GitHub Copilot reports its own key names in `tool_input` while the checks read Claude Code's: tool -> (Copilot key,
+# the key a check reads). The original key stays. A key already present is overwritten only under Copilot
+# (ACT_HOOK_HOST=copilot): there the Copilot key is the one its tool uses, so an extra Claude key cannot hide it.
+# An Edit's `file_text` is the whole new file of the editor tool's create command; with `new_str` as well, the
+# check judges both texts joined.
+_COPILOT_KEY_ALIASES: "dict[str, tuple[tuple[str, str], ...]]" = {
+    "Read": (("path", "file_path"),),
+    "Write": (("path", "file_path"), ("file_text", "content")),
+    "Edit": (("path", "file_path"), ("old_str", "old_string"), ("new_str", "new_string"), ("file_text", "new_string")),
+}
+
+
+def hook_host() -> str:
+    """Which harness runs the hook: the value of ACT_HOOK_HOST ("copilot" when the `powershell` field of a hook
+    entry started it), an empty string when it is unset (Claude Code)."""
+    return os.environ.get("ACT_HOOK_HOST", "")
+
+
+def _normalise_copilot_payload(payload: dict) -> dict:
+    """Give a Copilot tool call the keys the checks read, in place; returns `payload`. Always on, both harnesses:
+    Read, Write and Edit get `file_path` from `path`, Write `content` from `file_text`, Edit `old_string` from
+    `old_str` and `new_string` from `new_str` and `file_text` (both present: joined by a newline, so a check
+    sees both); a key already present is kept, except when hook_host() is "copilot": then the Copilot key wins.
+    Only then, too, does the shell tool, which Copilot reports as `Bash` although it runs PowerShell, become
+    `PowerShell`, so every check judges its text as PowerShell. Anything else is left as it is."""
+    tool_name = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    copilot = hook_host() == "copilot"
+    if isinstance(tool_name, str) and isinstance(tool_input, dict):
+        filled: "set[str]" = set()
+        for source, target in _COPILOT_KEY_ALIASES.get(tool_name, ()):
+            if source not in tool_input:
+                continue
+            value, earlier = tool_input[source], tool_input.get(target)
+            if target in filled:
+                if isinstance(value, str) and isinstance(earlier, str):
+                    tool_input[target] = f"{earlier}\n{value}"
+            elif copilot or target not in tool_input:
+                tool_input[target] = value
+                filled.add(target)
+    if tool_name == "Bash" and copilot:
+        payload["tool_name"] = "PowerShell"
+    return payload
+
+
 def _read_payload() -> dict:
     """Read the hook's JSON payload from stdin. Returns {} for empty/malformed input — a
     payload we cannot parse is never grounds to crash, only to fall back to defaults.
@@ -76,7 +121,7 @@ def _read_payload() -> dict:
         data = json.loads(raw)
     except json.JSONDecodeError:
         return {}
-    return data if isinstance(data, dict) else {}
+    return _normalise_copilot_payload(data) if isinstance(data, dict) else {}
 
 
 MODES_SEEN: dict[str, str] = {}
