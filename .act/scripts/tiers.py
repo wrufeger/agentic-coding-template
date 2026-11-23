@@ -116,6 +116,8 @@ _COPILOT_TOOL_ALIASES: dict[str, str] = {
 }
 
 COPILOT_AGENT_SUFFIX = ".agent.md"
+# A role bridge's optional Copilot-only description (init.py strips it from .claude/agents/ files)
+COPILOT_DESCRIPTION_KEY = "copilot-description"
 
 
 def copilot_tool_names(value: str) -> list[str]:
@@ -149,11 +151,16 @@ def render_generated_copilot_bridge(
     `reasoning` becoming `reasoning-effort` (left out when `effort` is falsy), `tools` mapped to
     Copilot's aliases and followed by `strict-tools-list: true` (no `tools` in the bridge: neither),
     `include-custom-instructions: true` last; every other key of the bridge (`effort`, `omitClaudeMd`,
-    `model`, ...) is dropped. With no `models` (a bridge without `tier` and no Copilot cell) the
-    model keys and `reasoning-effort` are left out. `variant_of` (a role name) makes the file that
-    role's "-high" variant: `name` becomes `<role>-high`, `variant-of: <role>` follows it and the
-    description is reworded. The body below the frontmatter is copied verbatim."""
+    `model`, ...) is dropped. A non-empty `copilot-description` replaces the bridge's `description`
+    as the file's `description` (at the place of `description`, or of `copilot-description` when the
+    bridge has no `description`) and is not written itself. With no `models` (a bridge without
+    `tier` and no Copilot cell) the model keys and `reasoning-effort` are left out. `variant_of` (a
+    role name) makes the file that role's "-high" variant: `name` becomes `<role>-high`,
+    `variant-of: <role>` follows it and the description is reworded (neither description of the
+    bridge is used). The body below the frontmatter is copied verbatim."""
     fields, body, order = split_frontmatter(bridge_text)
+    copilot_description = fields.get(COPILOT_DESCRIPTION_KEY, "").strip()
+    description_key = "description" if "description" in fields else COPILOT_DESCRIPTION_KEY
     model_lines: list[str] = []
     if models:
         model_lines = [
@@ -175,10 +182,13 @@ def render_generated_copilot_bridge(
             lines.append(f"name: {frontmatter.quote_value(value)}")
             if variant_of:
                 lines.append(f"variant-of: {variant_of}")
-        elif key == "description":
-            value = (f"Same as {variant_of}, one reasoning step higher - use only when named explicitly."
-                     if variant_of else fields[key])
-            lines.append(f"description: {frontmatter.quote_value(value)}")
+        elif key == description_key:
+            if variant_of:
+                value = f"Same as {variant_of}, one reasoning step higher - use only when named explicitly."
+            else:
+                value = copilot_description or fields.get("description", "")
+            if value or key == "description":
+                lines.append(f"description: {frontmatter.quote_value(value)}")
         elif key == "tools":
             lines.append(f"tools: {json.dumps(copilot_tool_names(fields[key]))}")
             lines.append("strict-tools-list: true")

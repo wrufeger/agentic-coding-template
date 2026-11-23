@@ -1902,7 +1902,23 @@ def _bridge_edited(
     # A variant whose model is unresolvable under `overrides` renders verbatim, without its
     # "-high" name/description/variant-of — those three lines then say nothing about an edit.
     drop = ("name", "description", "variant-of") if variant and "variant-of:" not in reference else ()
-    return _bridge_core(current, drop, copilot) != _bridge_core(reference, drop, copilot)
+    core = _bridge_core(current, drop, copilot)
+    if core == _bridge_core(reference, drop, copilot):
+        return False
+    if copilot and not variant:
+        # a Copilot file written before its bridge had `copilot-description` carries the bridge's
+        # plain description: that alone is no edit
+        try:
+            fields, _, _ = new_init.tiers.split_frontmatter(source_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            return True
+        wanted = fields.get(new_init.COPILOT_DESCRIPTION_KEY, "").strip()
+        plain = fields.get("description")
+        quote = new_init.tiers.frontmatter.quote_value
+        if wanted and plain is not None:
+            old_line, new_line = f"description: {quote(wanted)}\n", f"description: {quote(plain)}\n"
+            return core != _bridge_core(reference.replace(old_line, new_line, 1), drop, copilot)
+    return True
 
 
 def _in_git_history(root: Path, rel: str) -> bool:
@@ -2828,6 +2844,49 @@ def _report_copilot_files_without_model(root: Path, new_init) -> Optional[Path]:
         return None
 
 
+def _refresh_copilot_descriptions(root: Path, new_init, tools: list[str], notes: Optional[list[str]] = None) -> list[str]:
+    """Gives an existing base Copilot role file its bridge's `copilot-description`: only when the
+    file's frontmatter has the line `description: <the bridge's plain description>` exactly (the one
+    the template wrote before the bridge had the key) is that one line replaced, keeping its own
+    line ending; an edited line, a block value, a line already carrying the new text or no such line
+    leaves the file byte-equal. Never a "-high" variant, a package-owned file or a project's own
+    `<role>.md`. One unreadable or unwritable file is skipped with a note. Returns the changed
+    destinations, project-relative."""
+    base_targets = _role_bridge_targets(new_init, root, tools)[0]
+    owned = _package_owned(root)
+    quote = new_init.tiers.frontmatter.quote_value
+    changed: list[str] = []
+    for dest_rel, source_path in sorted(base_targets.items()):
+        if new_init.bridge_target_parts(dest_rel)[0] != "copilot" or dest_rel in owned:
+            continue
+        dest = root / dest_rel
+        try:
+            fields, _, _ = new_init.tiers.split_frontmatter(source_path.read_text(encoding="utf-8"))
+            wanted = fields.get(new_init.COPILOT_DESCRIPTION_KEY, "").strip()
+            plain = fields.get("description")
+            if not wanted or plain is None or not dest.is_file():
+                continue
+            old_line, new_line = f"description: {quote(plain)}", f"description: {quote(wanted)}"
+            if old_line == new_line:
+                continue
+            lines = dest.read_bytes().decode("utf-8").splitlines(keepends=True)
+            if not lines or lines[0].rstrip("\r\n") != "---":
+                continue
+            for index in range(1, len(lines)):
+                bare = lines[index].rstrip("\r\n")
+                if bare == "---":
+                    break
+                if bare == old_line:
+                    lines[index] = new_line + lines[index][len(bare):]
+                    dest.write_bytes("".join(lines).encode("utf-8"))
+                    changed.append(dest_rel)
+                    break
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            if notes is not None:
+                notes.append(f"{dest_rel}: description refresh skipped ({exc.__class__.__name__})")
+    return changed
+
+
 def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
     """Re-derives the `model`/`effort` frontmatter of every already-materialized role bridge (base
     and "-high" variant alike, template role or a project's own named in docs/ai/config.md §
@@ -2845,7 +2904,10 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
         copilot_plan = ""
         try:
             if "copilot" in _project_tools(root):
-                copilot_plan = ", and the model lists of the Copilot agent files under .github/agents/"
+                copilot_plan = (
+                    ", and the model lists of the Copilot agent files under .github/agents/"
+                    " and the description of Copilot role files still carrying their bridge's plain text"
+                )
         except (OSError, ValueError):
             pass
         return (
@@ -2872,7 +2934,8 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
         return "role bridge frontmatter refresh failed, left untouched", []
     omit_added = _add_omit_claude_md(root, new_init, notes)
     question = _report_copilot_files_without_model(root, new_init) if copilot else None
-    touched = [root / rel for rel in dict.fromkeys([*changed, *copilot_changed, *omit_added])]
+    described = _refresh_copilot_descriptions(root, new_init, _project_tools(root), notes) if copilot else []
+    touched = [root / rel for rel in dict.fromkeys([*changed, *copilot_changed, *omit_added, *described])]
     if question is not None:
         touched.append(question)
     total = len(changed) + len(copilot_changed)
@@ -2881,6 +2944,8 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
         summary += f" ({len(copilot_changed)} in {new_init.COPILOT_AGENTS_DIR})"
     if omit_added:
         summary += f"; omitClaudeMd added to {len(omit_added)} role bridge(s)"
+    if described:
+        summary += f"; description refreshed in {len(described)} Copilot role file(s)"
     if question is not None:
         summary += f"; inbox question filed: {COPILOT_NO_MODEL_TITLE}"
     return summary, touched

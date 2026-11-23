@@ -1724,6 +1724,11 @@ def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -
 # variant and is never copied into a generated agent file (the tool would see an unknown field
 # there).
 HIGH_VARIANT_KEY = "high-variant"
+# Frontmatter key of a role bridge that only the Copilot agent file reads: its value becomes that
+# file's `description` (tiers.render_generated_copilot_bridge()); it is never copied into
+# .claude/agents/, whose file keeps the bridge's plain `description`.
+COPILOT_DESCRIPTION_KEY = tiers.COPILOT_DESCRIPTION_KEY
+BRIDGE_ONLY_KEYS = (HIGH_VARIANT_KEY, COPILOT_DESCRIPTION_KEY)
 
 
 def bridge_declares_high_variant(fields: dict[str, str]) -> bool:
@@ -1742,14 +1747,22 @@ def bridge_wants_variant(root: Path, bridge_src: Path, fields: dict[str, str]) -
     return bridge_declares_high_variant(fields)
 
 
-def _without_bridge_only_keys(text: str) -> str:
-    """`text` (a role bridge) with its script-only frontmatter lines (HIGH_VARIANT_KEY) removed,
+def _without_bridge_only_keys(text: str, keep: tuple[str, ...] = ()) -> str:
+    """`text` (a role bridge) with its script-only frontmatter lines (BRIDGE_ONLY_KEYS, except those
+    in `keep`) removed, together with the indented continuation lines of such a key's value;
     everything else byte for byte."""
     match = re.match(r"---\r?\n(.*?\r?\n)---(?=\r?\n)", text, re.S)
     if not match:
         return text
-    kept = [line for line in match.group(1).splitlines(keepends=True)
-            if not line.startswith(f"{HIGH_VARIANT_KEY}:")]
+    dropped = tuple(f"{key}:" for key in BRIDGE_ONLY_KEYS if key not in keep)
+    kept: list[str] = []
+    skipping = False
+    for line in match.group(1).splitlines(keepends=True):
+        if skipping and (line[:1] in (" ", "\t") or not line.strip()):
+            continue
+        skipping = line.startswith(dropped)
+        if not skipping:
+            kept.append(line)
     return text[:match.start(1)] + "".join(kept) + text[match.end(1):]
 
 
@@ -1890,7 +1903,9 @@ def _write_copilot_agent_file(
         return f"{label}: already present as {other.name}, left unchanged", False
     if plan:
         return f"{label}: would create", False
-    bridge_text = _without_bridge_only_keys(bridge_src.read_text(encoding="utf-8"))
+    bridge_text = _without_bridge_only_keys(
+        bridge_src.read_text(encoding="utf-8"), keep=(COPILOT_DESCRIPTION_KEY,)
+    )
     tmpl_fields, _, _ = tiers.split_frontmatter(bridge_text)
     models, effort = [], None
     if "tier" in tmpl_fields or (overrides.get(role) or {}).get("copilot"):

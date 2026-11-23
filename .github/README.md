@@ -162,7 +162,7 @@ Around them sit the small files each tool reads (`CLAUDE.md`, `AGENTS.md`, `.cla
 | Tool                              | Reads                                                                      | What it gets                                                                                                                                                                              |
 |:----------------------------------|:---------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Claude Code**                   | `CLAUDE.md`, `.claude/settings.json`, `.claude/skills/`, `.claude/agents/` | everything: rules loaded by import, skills by name, sub-agent roles with a model and effort tier per role, hooks that enforce the checks below, a status line, the board at session start |
-| **GitHub Copilot**                | `AGENTS.md`, `.agents/skills/`, `.github/agents/`                          | rules and skills as instructions, and a role file per role with a model list (`models:`); no hooks, so nothing is enforced mechanically                                                   |
+| **GitHub Copilot**                | `AGENTS.md`, `.agents/skills/`, `.github/agents/`                          | rules and skills as instructions, a role file per role with a model list (`models:`) and a note on when to call it; no hooks, so nothing is enforced mechanically                         |
 | **Codex, Cursor**                 | `AGENTS.md`, `.agents/skills/`                                             | rules and skills as instructions; no hooks, so nothing is enforced mechanically, and no sub-agent roles                                                                                   |
 | **Gemini CLI**                    | `GEMINI.md`, `.agents/skills/`                                             | the skills; a project has no `GEMINI.md` yet — point Gemini CLI at `AGENTS.md` in its settings                                                                                            |
 | **any other assistant**           | —                                                                          | tell it to read `docs/ai/rules.md`; every skill is a plain `SKILL.md` it can follow                                                                                                       |
@@ -170,6 +170,8 @@ Around them sit the small files each tool reads (`CLAUDE.md`, `AGENTS.md`, `.cla
 Every project gets `AGENTS.md` and the skill copies under `.agents/skills/` — read the same way by
 Codex, Copilot, Gemini CLI, and Cursor; the Claude Code files come while `claude-code` is among the
 project's tools (the default).
+`AGENTS.md` also asks Copilot to hand research, test runs, reviews and independent parts to the roles
+under `.github/agents/`, in parallel where the parts are independent.
 
 In Claude Code, hooks check before each action — each check can be set to `block`, `warn`, or `off`
 in `docs/ai/config.md` § Checks:

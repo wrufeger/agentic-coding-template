@@ -7,6 +7,13 @@ never a real model name — `tools`), followed by the line "Apply the rules from
 before the ones below.", followed by room for the project's own additions to the role. A role with
 no bridge yet has nothing written into the project.
 
+**`copilot-description` (optional):** the `description` of the role's Copilot file
+(`.github/agents/<name>.agent.md`) in place of the bridge's own; the template roles use it to say
+when Copilot should call the role. The scripts read it and never copy it into `.claude/agents/`,
+whose file keeps the plain `description`; a `-high` variant keeps its fixed text. `act-update` also
+writes it into an existing Copilot file whose `description:` line is still exactly the bridge's plain
+one; an edited line stays, and a `-high` variant is never changed.
+
 **Tier/reasoning -> model/effort, only at generation time:** `.act/tiers.json` is the one place
 under `.act/` a real model name is allowed, alongside a project's own fixed-model override in
 `docs/ai/config.md` § Roles. `.act/scripts/init.py`'s `agent_bridge_targets()` pairs a role with
@@ -42,4 +49,6 @@ every `update` and at every session start (`dispatch.py`'s `session-start-refres
 `model`/`effort` frontmatter pair alone, re-derived from the current `.act/tiers.json` and
 `docs/ai/config.md` § Roles (`.act/scripts/tiers.py`'s `refresh_project_bridge_frontmatter()`) — a
 project's own role, named only in § Roles with a hand-written bridge, gets the same treatment as
-long as that bridge file exists.
+long as that bridge file exists. One exception: `update.py` sets a Copilot file's `description` to
+its bridge's `copilot-description` while that line still carries the bridge's plain text (see
+`copilot-description` above).

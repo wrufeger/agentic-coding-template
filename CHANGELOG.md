@@ -59,6 +59,11 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   lists what it cannot rewrite under `by hand:`.
 - `worker-run-watch` (`warn`, `off` skips it; § Checks of `docs/ai/config.md`) tells a worker and the orchestrator
   when a script it ran committed, changed a ref or wrote outside every running worker's `Write scope:`. Never refuses.
+- Copilot roles: a role bridge may carry `copilot-description:`, the `description` of its `.github/agents/` file; the
+  template roles say there when Copilot should call them. `act-update` also sets it in an existing file still carrying
+  the old text.
+- `AGENTS.md` asks GitHub Copilot to delegate research, test runs, reviews and independent parts to the roles under
+  `.github/agents/`, as parallel calls where the parts are independent.
 
 ### Changed
 - `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
