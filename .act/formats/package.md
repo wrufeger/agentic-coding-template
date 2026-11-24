@@ -202,7 +202,7 @@ Without `--yes` it writes nothing. It prints the plan, the origin and admission 
 `update <old> → <new>` or `downgrade <old> → <new>` (the same id again is an update, a lower version a downgrade,
 allowed after the yes like an update; the units the new version drops go), what happens to the folder
 `.act-local/packages/<id>/` (a resting folder that another source replaces is said to be replaced and deleted), the list of project
-files that change and a unified diff of each (`docs/ai/rules.md`, skill and role copies, `docs/ai/config.md`,
+files that change and a unified diff of each (`docs/ai/local/rules.md`, skill and role copies, `docs/ai/config.md`,
 `.act-lock.json`), and the line `install exactly this: python .act/scripts/packages.py add <source> --yes <code>`. The
 code is the first 12 hex digits of a package hash computed over the raw bytes of every package file, with no
 line-ending folding: any byte that changes after the plan was shown changes the code, and `--yes` with the old code is

@@ -4,7 +4,7 @@
 # Purpose: The scope of the template inside one project — docs/ai/config.md § Scope: `profile`
 #          (minimal | standard | full) and `exclude` (a comma list of template skills, roles, rule
 #          files and topics). One library, used by init.py and update.py (skill copies, role
-#          bridges), rules.py (the import lines of docs/ai/rules.md) and the session start (topics,
+#          bridges), rules.py (the import lines of docs/ai/local/rules.md) and the session start (topics,
 #          the one-line report), so no path writes a copy the project cut. Pure reading: this module
 #          writes nothing.
 # Rules:   a missing, empty or unknown `profile` is `full`, an empty or `none` `exclude` cuts
@@ -17,7 +17,7 @@
 #          recorded (`readable` False), so nothing the scope cut comes back because the file cannot be read.
 #          Active packages (the lock's `packages`) cut the same way, by name: a rule file all of whose rules
 #          packages disable, and a topic a package replaces (package_cut(); what a package disables is read
-#          from the marks it left in docs/ai/rules.md and from its own package.md while that file still has
+#          from the marks it left in docs/ai/local/rules.md and from its own package.md while that file still has
 #          the hash the lock recorded). Pure reading too.
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def template_topics(root: Path) -> dict[str, str]:
 
 
 def template_rules(root: Path) -> dict[str, str]:
-    """{lower-case "<layer>/<file>.md": real} of the rule files a docs/ai/rules.md can import."""
+    """{lower-case "<layer>/<file>.md": real} of the rule files a docs/ai/local/rules.md can import."""
     found: dict[str, str] = {}
     for layer in RULE_LAYERS:
         base = root / ".act" / "rules" / layer
@@ -165,14 +165,14 @@ def _rule_key(entry: str) -> str:
 
 def package_disables(root: Path, packages: "dict[str, dict]") -> set[str]:
     """The rule ids the packages in `packages` (the lock's `packages` record) disable, counting only rows that are
-    still unchecked: a rule whose checkbox line in docs/ai/rules.md carries the mark of one of them and is
+    still unchecked: a rule whose checkbox line in docs/ai/local/rules.md carries the mark of one of them and is
     unchecked (this holds with the package folder gone), unless the package's own `## disables` (read while its
     package.md still has the hash the lock recorded) no longer lists it -- the new version of the package dropped
     it, the row goes back on at the next load -- and the `## disables` of each such package, except for a rule
     the owner checked again by hand (its row is checked and keeps the mark). Never raises."""
     found: set[str] = set()
     try:
-        lines = (root / "docs" / "ai" / "rules.md").read_text(encoding="utf-8").split("\n")
+        lines = (root / actlib.RULES_FILE).read_text(encoding="utf-8").split("\n")
     except (OSError, UnicodeDecodeError):
         lines = []
     listed: dict[str, set[str]] = {}  # what each package whose package.md can be read lists

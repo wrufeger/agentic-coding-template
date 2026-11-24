@@ -3,6 +3,15 @@ The project's own or overriding files, mirrored after `.act/` — same relative 
 wins over the template version (`docs/ai/local/<path>` is looked up before `.act/<path>`). The
 user owns this folder; the assistant writes here only on explicit instruction.
 
+A file directly in this folder (no subfolder) is the project's own and never overrides a template
+file; the one exception is `tips.md`.
+
+## `rules.md`
+
+The project's rule file, not an override: which template rules load, which are switched off, and your
+own rules under "Own rules". `CLAUDE.md` imports it; `update` moves it here from its older place
+`docs/ai/rules.md`.
+
 ## `resources.md`
 
 Your project's own reading list (own sources, private links), created by `init` and offered to older

@@ -18,7 +18,7 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   `.act/formats/package.md`.
 - **Signed and scanned:** a package's origin is checked with `ssh-keygen -Y verify`; `packages-unverified` (`block`
   default, `scan`, `allow`) decides about one without a valid signature; `package_scan.py` lists what it can do.
-- **Packages take effect at the next session:** their rules are imported in marked blocks of `docs/ai/rules.md`,
+- **Packages take effect at the next session:** their rules are imported in marked blocks of `docs/ai/local/rules.md`,
   rules they disable are unchecked, skill and role copies and check modules follow; all of it goes with `remove`.
 
 ### Added
@@ -66,6 +66,13 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   `.github/agents/`, as parallel calls where the parts are independent.
 
 ### Changed
+- Your rule file is now `docs/ai/local/rules.md`, next to your other own files. `act-update` moves it, keeps your own
+  rules, boxes and package blocks, rewrites its import lines, and points `CLAUDE.md`, `AGENTS.md` and `.gitattributes`
+  at it.
+- If `docs/ai/rules.md` and `docs/ai/local/rules.md` both exist, the update moves nothing and says so: merge them by
+  hand and delete the old one. Until the old file has moved, every session start says
+  `docs/ai/rules.md is still at its old place`.
+- A file directly in `docs/ai/local/`, such as `rules.md` (except `tips.md`), is never an override of a file of `.act/`.
 - `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
   the dynamic import was meant to break a cycle or keep code out of the bundle.
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
@@ -103,6 +110,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   it starts writes only where the worker may write itself.
 
 ### Fixed
+- The session start says `no rule file loaded` when `CLAUDE.md` leads to no rule file; before, it showed `rules: 0` or
+  a count and nothing else.
 - GitHub Copilot on Windows refused every tool call in a project with Claude Code hooks ("hook errored"); the hooks
   now run there, and a denial shows its reason.
 - Under Copilot the hooks do not check edits made through its `apply_patch` tool, and a project with only `copilot` in

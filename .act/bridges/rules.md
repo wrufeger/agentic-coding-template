@@ -8,7 +8,7 @@ template text of its rule, checked or not.
 ## Shared — every role, including sub-agents
 
 
-@../../.act/rules/shared/00-core.md
+@../../../.act/rules/shared/00-core.md
   - [x] `R-work-evidence`
   - [x] `R-work-override`
   - [x] `R-work-language`
@@ -17,7 +17,7 @@ template text of its rule, checked or not.
   - [x] `R-work-throwaway`
   - [x] `R-role-worker`
 
-@../../.act/rules/shared/10-safety.md
+@../../../.act/rules/shared/10-safety.md
   - [x] `R-safe-approval`
   - [x] `R-safe-no-secret-cli`
   - [x] `R-safe-no-secret-read`
@@ -30,7 +30,7 @@ template text of its rule, checked or not.
   - [x] `R-safe-block`
   - [x] `R-safe-foreign-text`
 
-@../../.act/rules/shared/20-code.md
+@../../../.act/rules/shared/20-code.md
   - [x] `R-code-language`
   - [x] `R-code-encoding`
   - [x] `R-code-tools`
@@ -38,25 +38,25 @@ template text of its rule, checked or not.
   - [x] `R-code-checks-intact`
   - [x] `R-docs-order`
 
-Imports resolve relative to this file (`docs/ai/`), hence the `../../`. Check what Claude Code
+Imports resolve relative to this file (`docs/ai/local/`), hence the `../../../`. Check what Claude Code
 actually loads with `python .act/scripts/rules.py --imports`. A rule file whose line is a bare path
 (no `@`) is switched off: `exclude` in `docs/ai/config.md` § Scope does that for you at the session
 start, and puts the `@` back when you drop the entry.
 
 ## Coding — every role that writes or reviews code
 
-@../project/coding_rules.md
+@../../project/coding_rules.md
 
 ## Orchestrator only — the main session
 
 Applies to the main session only — workers skip this section.
 
-@../../.act/rules/orchestrator/00-role.md
+@../../../.act/rules/orchestrator/00-role.md
   - [x] `R-role-main`
   - [x] `R-role-escalate`
   - [x] `R-role-outcome`
 
-@../../.act/rules/orchestrator/10-work.md
+@../../../.act/rules/orchestrator/10-work.md
   - [x] `R-work-record-now`
   - [x] `R-work-process-error`
   - [x] `R-work-session-start`
@@ -64,7 +64,7 @@ Applies to the main session only — workers skip this section.
   - [x] `R-work-config`
   - [x] `R-work-handover`
 
-@../../.act/rules/orchestrator/20-human.md
+@../../../.act/rules/orchestrator/20-human.md
   - [x] `R-human-inbox-first`
   - [x] `R-human-ask`
   - [x] `R-human-capture`
@@ -73,7 +73,7 @@ Applies to the main session only — workers skip this section.
   - [x] `R-human-text`
   - [x] `R-human-external`
 
-@../../.act/rules/orchestrator/30-cost.md
+@../../../.act/rules/orchestrator/30-cost.md
   - [x] `R-cost-delegate`
   - [x] `R-cost-wait`
   - [x] `R-cost-amend`

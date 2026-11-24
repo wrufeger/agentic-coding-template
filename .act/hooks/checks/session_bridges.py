@@ -38,7 +38,7 @@ def _refresh_board(root: Path) -> None:
 _BRIDGE_MAP = {
     "CLAUDE.md": "CLAUDE.md",
     "AGENTS.md": "AGENTS.md",
-    "docs/ai/rules.md": "rules.md",
+    actlib.RULES_FILE: "rules.md",
 }
 
 
@@ -111,8 +111,11 @@ def _apply_artifact_setting(root: Path, config: dict[str, str], write: bool) -> 
 
 
 def _follow_rules_md(root: Path, write: bool) -> list[str]:
-    """Notes on what a locally edited docs/ai/rules.md lacks of the template and what was entered into
-    it (rules.add_missing_core_entries; with write=False only said, nothing written). Never raises."""
+    """Notes on what a locally edited docs/ai/local/rules.md lacks of the template and what was entered into
+    it (rules.add_missing_core_entries; with write=False only said, nothing written). Never raises. Nothing is
+    entered while the project's rule file is still at its old place (docs/ai/rules.md exists)."""
+    if (root / actlib.LEGACY_RULES_FILE).is_file():
+        return []
     try:
         import rules  # deferred like the other rules.py uses here: a broken rules.py must not end the session
         result = rules.add_missing_core_entries(root, write=write)
@@ -121,13 +124,13 @@ def _follow_rules_md(root: Path, write: bool) -> list[str]:
     notes: list[str] = []
     if result.messages:
         verb = "entered" if write else "would be entered (warn mode, not applied)"
-        notes.append(f"[act] note: docs/ai/rules.md {verb}: {'; '.join(result.messages)}")
-    notes.extend(f"[act] note: docs/ai/rules.md: {problem}" for problem in result.problems)
+        notes.append(f"[act] note: docs/ai/local/rules.md {verb}: {'; '.join(result.messages)}")
+    notes.extend(f"[act] note: docs/ai/local/rules.md: {problem}" for problem in result.problems)
     # No record of what was offered yet: files it does not import are named, once (the cache keeps the
     # wording shown last), never entered here — the first update starts the record from git.
     unlisted_note = ""
     if result.unlisted:
-        unlisted_note = (f"[act] note: docs/ai/rules.md does not import {', '.join(result.unlisted)}; nothing "
+        unlisted_note = (f"[act] note: docs/ai/local/rules.md does not import {', '.join(result.unlisted)}; nothing "
                          f"tells whether you left them out on purpose. To enter them: {rules.ADD_MISSING_COMMAND}")
     try:
         if actlib.read_cache().get("rules_unlisted_note", "") != unlisted_note:
@@ -142,7 +145,7 @@ def _follow_rules_md(root: Path, write: bool) -> list[str]:
 
 
 def _with_packages(root: Path, text: str) -> str:
-    """The bridge text of docs/ai/rules.md with what the active packages bring (import blocks, disabled rules),
+    """The bridge text of docs/ai/local/rules.md with what the active packages bring (import blocks, disabled rules),
     so a re-derived file keeps them; unchanged when there is no package or the lock cannot be read."""
     try:
         import package_load
@@ -156,12 +159,12 @@ def _with_packages(root: Path, text: str) -> str:
 
 def _scoped_bridge_text(root: Path, dest_rel: str, text: str, record: bool = False) -> str:
     """`text` of a generated bridge as this project's scope (docs/ai/config.md § Scope; act_profile.py)
-    wants it written: for docs/ai/rules.md the import line of each excluded rule file is the bare path
+    wants it written: for docs/ai/local/rules.md the import line of each excluded rule file is the bare path
     (rules.apply_core_cut), any other bridge is returned as it is. With `record` the lines it switches
     off are first entered in the lock's `rules_cut`, so the scope can switch them on again when the
     exclusion ends; when that cannot be written (no lock, a lock that cannot be read), or on any
     failure, the text is returned uncut — a line cut without its record would never come back."""
-    if dest_rel != "docs/ai/rules.md":
+    if dest_rel != actlib.RULES_FILE:
         return text
     try:
         import act_profile  # deferred like rules/update: a broken module must not end the session
@@ -180,6 +183,27 @@ def _scoped_bridge_text(root: Path, dest_rel: str, text: str, record: bool = Fal
         return cut_text
     except Exception:  # noqa: BLE001 - the scope is best effort; the uncut bridge is always a valid file
         return text
+
+
+def _without_package_parts(text: str) -> str:
+    """`text` of docs/ai/local/rules.md without what active packages bring (their import blocks, the marks of the rules
+    they disable); the text itself when that cannot be told."""
+    try:
+        import rules
+        return rules.apply_package_marks(rules.apply_package_blocks(text, [], []), {}, set())
+    except Exception:  # noqa: BLE001 - best effort; the comparison then simply stays what it was
+        return text
+
+
+def _same_as_bridge(root: Path, dest_rel: str, source_text: str, dest_text: str) -> bool:
+    """Whether the file at `dest_rel` equals what the refresh would write from the bridge `source_text`: both sides
+    with the scope's cut and the packages applied; for the rule file also with the package parts taken out of both,
+    so a package that cannot be read here (its folder is missing in this checkout) does not make an unedited file
+    look edited."""
+    wanted = _scoped_bridge_text(root, dest_rel, source_text)
+    found = _scoped_bridge_text(root, dest_rel, dest_text)
+    return wanted == found or (dest_rel == actlib.RULES_FILE
+                               and _without_package_parts(wanted) == _without_package_parts(found))
 
 
 def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tuple[list[str], list[str], list[str]]:
@@ -226,13 +250,42 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
     lock_present = (root / ".act-lock.json").is_file()
     marker = _bootstrap_marker()
 
+    # The project's rule file still at its old place (docs/ai/rules.md): the bridges now name the new place, so
+    # nothing is derived from them until update.py has moved the file. No copy of the new file beside the old one,
+    # and no CLAUDE.md or AGENTS.md that points at a file that is not there.
+    old_place = (root / actlib.LEGACY_RULES_FILE).is_file()
+
     for dest_rel, source_name in _BRIDGE_MAP.items():
         dest_path = root / dest_rel
         source_path = root / ".act" / "bridges" / source_name
+        if old_place:
+            continue
         if not dest_path.is_file() or not source_path.is_file():
             continue  # not generated yet, or template source missing — nothing to do here
 
+        # docs/ai/local/rules.md is compared and written with the scope's cut applied (docs/ai/config.md §
+        # Scope: an excluded rule file's import line is the bare path), on both sides, so a copy the
+        # cut already reached is "the same" and a copy that was not yet cut is cut once, not flipped
+        # back by this refresh and cut again by the scope step.
+        try:
+            source_text = source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+            dest_text = dest_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+            matches_source = (_scoped_bridge_text(root, dest_rel, source_text)
+                              == _scoped_bridge_text(root, dest_rel, dest_text))
+            looks_generated = matches_source or _same_as_bridge(root, dest_rel, source_text, dest_text)
+        except (OSError, UnicodeDecodeError):
+            matches_source = looks_generated = False
+
         recorded_hash = generated.get(dest_rel)
+        if recorded_hash is None and dest_rel == actlib.RULES_FILE and actlib.LEGACY_RULES_FILE in generated:
+            # Another checkout of a project whose rule file has moved: its cache still holds the old key. A
+            # copy equal to what the bridge writes is the generated one; any other keeps the old record, which
+            # no longer matches, so it counts as the owner's edit.
+            recorded_hash = actlib.generated_hash(dest_path) if looks_generated else generated[actlib.LEGACY_RULES_FILE]
+            if write:
+                generated[dest_rel] = recorded_hash
+                del generated[actlib.LEGACY_RULES_FILE]
+                actlib.write_cache({"generated": generated})
         if recorded_hash is None:
             continue  # never tracked as generated — not ours to touch
 
@@ -241,8 +294,10 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
         # Compared with line endings normalized (and still accepts an older, raw-byte
         # recorded hash) so a checkout's own line endings never make an untouched bridge look
         # "changed locally" on their own. Skipped for a bootstrap copy: its hash never
-        # matches the recorded one either, but that mismatch is not a local edit to preserve.
-        if not is_bootstrap and not actlib.generated_unchanged(dest_path, recorded_hash):
+        # matches the recorded one either, but that mismatch is not a local edit to preserve. A copy that
+        # equals what its bridge writes is no edit either, whatever the record says (another checkout that
+        # pulled a commit with the bridge re-derived): its record is renewed below.
+        if not is_bootstrap and not matches_source and not actlib.generated_unchanged(dest_path, recorded_hash):
             changed.append(dest_rel)
             continue
 
@@ -251,16 +306,7 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
         # An unedited bridge that already equals its source (line endings aside) has nothing to
         # refresh. Rewriting it with LF would only change the bytes of a CRLF checkout
         # (core.autocrlf=true): git then lists the file as modified although `git diff` is empty.
-        # docs/ai/rules.md is compared and written with the scope's cut applied (docs/ai/config.md §
-        # Scope: an excluded rule file's import line is the bare path), on both sides, so a copy the
-        # cut already reached is "the same" and a copy that was not yet cut is cut once, not flipped
-        # back by this refresh and cut again by the scope step.
-        try:
-            same = (not is_bootstrap and
-                    _scoped_bridge_text(root, dest_rel, source_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
-                    == _scoped_bridge_text(root, dest_rel, dest_path.read_text(encoding="utf-8").replace("\r\n", "\n")))
-        except (OSError, UnicodeDecodeError):
-            same = False
+        same = matches_source and not is_bootstrap
 
         if not write:
             # Only what would actually change.

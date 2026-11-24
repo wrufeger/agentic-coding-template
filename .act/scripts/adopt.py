@@ -438,6 +438,7 @@ def init_destinations() -> set:
     dests = {dest for _src, dest in init_mod.skeleton_files(TEMPLATE_ACT / "skeleton")}
     dests |= {spec["dest"] for spec in init_mod.BRIDGES.values()
               if spec["kind"] != "json-merge" and spec["dest"] not in ("AGENTS.md", "CLAUDE.md")}
+    dests.add(actlib.LEGACY_RULES_FILE)  # a project's own rule file at its old place collides as well
     return dests
 
 
@@ -530,7 +531,7 @@ def validate(root: Path, scan: dict, rows: list, on_disk: bool, moved_first=lamb
         if protected and action in ("delete", "legacy"):
             problems.append(f"{where}: note {note!r} forbids {action!r}")
         if protected and action == "adopt":
-            bridge_dests = {"AGENTS.md", "CLAUDE.md", "docs/ai/rules.md", ".claude/settings.json"}
+            bridge_dests = {"AGENTS.md", "CLAUDE.md", "docs/ai/rules.md", "docs/ai/local/rules.md", ".claude/settings.json"}
             if path in bridge_dests or any(t in bridge_dests for t in _targets(row)):
                 problems.append(f"{where}: note {note!r} forbids a bridge overwrite")
         if action != "keep" and any(marker in note for marker in LINK_MARKERS):
@@ -2269,7 +2270,7 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
   reads the archived copy as its own configuration) — then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
-  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
+  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/local/rules.md,
   docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its

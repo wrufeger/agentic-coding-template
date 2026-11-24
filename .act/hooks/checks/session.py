@@ -12,7 +12,7 @@
 #          never pays for/depends on `update`'s own imports — entries, rules, ... — just for this
 #          best-effort sub-step), template-awareness notes (check 2b), the active-topics
 #          status line, the import check and, only as a fallback, a short form of the
-#          orchestrator-only rules when docs/ai/rules.md does not import them (all gated by
+#          orchestrator-only rules when docs/ai/local/rules.md does not import them (all gated by
 #          their own docs/ai/config.md row, see _check_mode), and the scope of docs/ai/config.md
 #          § Scope (`profile`, `exclude`; act_profile.py): the import lines of excluded rule files,
 #          one line naming the cut, topics left out, and the packages of docs/ai/config.md § Packages
@@ -195,9 +195,9 @@ _OLD_IMPORT_RE = re.compile(r"^(?:@\.act/|`\.act/rules/orchestrator/)", re.MULTI
 
 
 def _old_rules_imports(root: Path) -> tuple[int, str]:
-    """(count, sha256) of older "@.act/..." import lines left in docs/ai/rules.md — Claude Code
+    """(count, sha256) of older "@.act/..." import lines left in docs/ai/local/rules.md — Claude Code
     resolves them from docs/ai/ and never finds them. (0, "") when there are none."""
-    path = root / "docs" / "ai" / "rules.md"
+    path = root / actlib.RULES_FILE
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -206,8 +206,36 @@ def _old_rules_imports(root: Path) -> tuple[int, str]:
     return (count, actlib.sha256_file(path)) if count else (0, "")
 
 
+def _rules_place_note(root: Path) -> Optional[str]:
+    """One line at every session start, with no memory of having said it, while the project's rule file is
+    still at its old place: the old file alone (update.py moves it), or both files (nothing is moved, the owner
+    merges them). None when docs/ai/rules.md is not there."""
+    if not (root / actlib.LEGACY_RULES_FILE).is_file():
+        return None
+    if (root / actlib.RULES_FILE).is_file():
+        return (f"[act] note: both {actlib.LEGACY_RULES_FILE} and {actlib.RULES_FILE} exist; merge them by hand "
+                f"and delete {actlib.LEGACY_RULES_FILE} (CLAUDE.md loads only the file it imports; check: "
+                "python .act/scripts/rules.py --imports)")
+    return (f"[act] note: {actlib.LEGACY_RULES_FILE} is still at its old place; run "
+            f"`python .act/scripts/update.py` to move it to {actlib.RULES_FILE}")
+
+
+_RULE_FILE_PREFIXES = (".act/rules/", "docs/ai/local/rules/")
+
+
+def _no_rule_file_note(reached: list[str]) -> Optional[str]:
+    """A line when CLAUDE.md (the first entry of `reached`) leads to no rule file at all: neither the project's
+    rule file, nor the one at its old place, nor a file of the template's or the project's own rules — Claude
+    Code then loads no rule of this template, and a count of rules shown at the start would hide it."""
+    for path in reached[1:]:
+        if path in (actlib.RULES_FILE, actlib.LEGACY_RULES_FILE) or path.startswith(_RULE_FILE_PREFIXES):
+            return None
+    return (f"[act] note: no rule file loaded: CLAUDE.md imports none; it must hold the line "
+            f"@{actlib.RULES_FILE} (check: python .act/scripts/rules.py --imports)")
+
+
 def _old_imports_note(root: Path) -> Optional[str]:
-    """One note per state of a docs/ai/rules.md that still carries the old import form — one
+    """One note per state of a docs/ai/local/rules.md that still carries the old import form — one
     changed locally or never recorded as generated; an unchanged one was just re-derived by
     _refresh_bridges. Shown once, again only after the file changed and is still wrong.
     Remembered in .act-local/cache.json."""
@@ -218,9 +246,9 @@ def _old_imports_note(root: Path) -> Optional[str]:
     if cache.get("rules_import_hint") == digest:
         return None
     actlib.write_cache({"rules_import_hint": digest})
-    return (f"[act] note: docs/ai/rules.md names {count} rule file(s) in a form "
+    return (f"[act] note: docs/ai/local/rules.md names {count} rule file(s) in a form "
             "Claude Code never loads (\"@.act/...\" or `.act/rules/orchestrator/...`) — write each "
-            "as \"@../../.act/...\" (check: python .act/scripts/rules.py --imports)")
+            "as \"@../../../.act/...\" (check: python .act/scripts/rules.py --imports)")
 
 
 def _changed_bridge_note(root: Path, dest_rel: str) -> Optional[str]:
@@ -232,7 +260,7 @@ def _changed_bridge_note(root: Path, dest_rel: str) -> Optional[str]:
     too: a template update to the bridge source (e.g. .act/bridges/rules.md) while the project's
     copy stays locally edited must note again once -- the project's edit is now against a template
     version it has never been compared to, even though the local file itself did not change. This
-    matters most for docs/ai/rules.md, which projects are invited to edit (own rules, § "Own
+    matters most for docs/ai/local/rules.md, which projects are invited to edit (own rules, § "Own
     rules")."""
     dest_path = root / dest_rel
     try:
@@ -286,8 +314,13 @@ def _human_line(state: dict) -> Optional[str]:
         parts.append(f"inbox: {answered} answered to process, {open_count} open")
     if state.get("whiteboard"):
         parts.append(f"whiteboard: {state['whiteboard']} to process")
+    if state.get("old_place"):
+        parts.append(f"{actlib.LEGACY_RULES_FILE} is still at its old place, see note" if state["old_place"] == "old"
+                     else f"{actlib.LEGACY_RULES_FILE} and {actlib.RULES_FILE} both exist, see note")
+    if state.get("no_rules"):
+        parts.append("no rule file loaded, see note")
     if state.get("old_imports"):
-        parts.append("docs/ai/rules.md uses the old import form, see note")
+        parts.append("docs/ai/local/rules.md uses the old import form, see note")
     if state.get("update"):
         parts.append(f"update {state['update']} available")
     if state.get("tidy"):
@@ -667,7 +700,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                 print(own_note)
 
     for dest_rel in changed_bridges:
-        if dest_rel == "docs/ai/rules.md":
+        if dest_rel == actlib.RULES_FILE:
             # Edited locally, so not re-derived: enter what the template has and the file does not know
             # (the same function update.py uses), leave everything the owner wrote as it is.
             entry_notes = _follow_rules_md(root, write=(mode == "block"))
@@ -676,7 +709,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                     print(entry_note)
             else:
                 warn_notes.extend(entry_notes)
-        if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
+        if dest_rel == actlib.RULES_FILE and _old_rules_imports(root)[0]:
             continue  # the more specific import note below replaces this one
         note = _changed_bridge_note(root, dest_rel)
         if note:
@@ -700,7 +733,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     # What Claude Code actually loads. A checked coding set becomes an "@" import (and an
     # unchecked one loses it) so the checkboxes in docs/project/coding_rules.md decide; a locally
-    # changed docs/ai/rules.md still importing "@.act/..." gets one note; then the imports are
+    # changed docs/ai/local/rules.md still importing "@.act/..." gets one note; then the imports are
     # followed from CLAUDE.md exactly the way Claude Code does (rules.resolve_imports).
     reached: list[str] = []
     try:
@@ -744,6 +777,10 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         if old_note:
             state["old_imports"] = True
             print(old_note)
+        place_note = _rules_place_note(root)
+        if place_note:
+            state["old_place"] = "both" if (root / actlib.RULES_FILE).is_file() else "old"
+            print(place_note)
         if (root / "CLAUDE.md").is_file():
             reached, unresolved = rules.resolve_imports(root, "CLAUDE.md")
             state["files"] = len(reached)
@@ -751,6 +788,10 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             if unresolved:
                 print(f"[act] note: {len(unresolved)} @-import(s) Claude Code cannot follow — "
                       "python .act/scripts/rules.py --imports")
+            no_rules_note = _no_rule_file_note(reached)
+            if no_rules_note:
+                state["no_rules"] = True
+                print(no_rules_note)
     except Exception as exc:
         print(f"[act] note: import check failed ({exc.__class__.__name__})")
 

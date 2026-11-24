@@ -149,7 +149,7 @@ A project set up from here has three places that matter:
   roles, hooks, and scripts. Never edited in the project (a project version goes to `docs/ai/local/`
   instead), replaced as a whole by `act-update`.
 - **`docs/ai/`** — the working state, versioned with the code: settings (`config.md`), the rules
-  in effect (`rules.md`), one whiteboard per person (`whiteboard-<identity>.md`), inbox, tasks, backlog, and
+  in effect (`local/rules.md`, the project's rule file, not an override), one whiteboard per person (`whiteboard-<identity>.md`), inbox, tasks, backlog, and
   journal — plus the generated board (`board.md`, not versioned by default; refreshed at session
   start and after a merge).
 - **`docs/project/`** — the project's own documentation, including which coding rule sets apply.
@@ -165,7 +165,7 @@ Around them sit the small files each tool reads (`CLAUDE.md`, `AGENTS.md`, `.cla
 | **GitHub Copilot**                | `AGENTS.md`, `.agents/skills/`, `.github/agents/`, `.claude/settings.json` | rules and skills as instructions, a role file per role with a model list (`models:`) and a note on when to call it; hooks with `claude-code` in `tools` (Windows: `powershell` field), none with only `copilot`; `apply_patch` edits unchecked |
 | **Codex, Cursor**                 | `AGENTS.md`, `.agents/skills/`                                             | rules and skills as instructions; no hooks, so nothing is enforced mechanically, and no sub-agent roles                                                                                                                                        |
 | **Gemini CLI**                    | `GEMINI.md`, `.agents/skills/`                                             | the skills; a project has no `GEMINI.md` yet — point Gemini CLI at `AGENTS.md` in its settings                                                                                                                                                 |
-| **any other assistant**           | —                                                                          | tell it to read `docs/ai/rules.md`; every skill is a plain `SKILL.md` it can follow                                                                                                                                                            |
+| **any other assistant**           | —                                                                          | tell it to read `docs/ai/local/rules.md`; every skill is a plain `SKILL.md` it can follow                                                                                                                                                            |
 
 Every project gets `AGENTS.md` and the skill copies under `.agents/skills/` — read the same way by
 Codex, Copilot, Gemini CLI, and Cursor; the Claude Code files come while `claude-code` is among the

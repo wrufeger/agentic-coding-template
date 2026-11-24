@@ -2,7 +2,7 @@
 
 summary: orchestrator mandate, escalation path, role assignment
 
-Imported for every session through `docs/ai/rules.md`, but meant for the main session only —
+Imported for every session through `docs/ai/local/rules.md`, but meant for the main session only —
 a worker (sub-agent) skips this file and the other orchestrator rules.
 
 ## `R-role-main` — The orchestrator's mandate

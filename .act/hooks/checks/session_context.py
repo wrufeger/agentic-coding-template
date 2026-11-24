@@ -427,7 +427,7 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
 
 # ---------------------------------------------------------------------------
 # The scope (docs/ai/config.md § Scope: `profile`, `exclude`) — what the template's units the
-# project cut means for this start: the import lines of excluded rule files in docs/ai/rules.md
+# project cut means for this start: the import lines of excluded rule files in docs/ai/local/rules.md
 # (rules.sync_core_cut), the copies of skills and roles (update.sync_dependent_files, which runs
 # earlier and follows the snapshot in the lock), and one line that names the cut. Skills, roles
 # and rules are fixed when a session starts, so a change takes effect from the next one.
@@ -444,6 +444,10 @@ def _scope_notes(root: Path, write: bool, copies_moved: bool) -> tuple[list[str]
     import package_load
     printed: list[str] = []
     pending: list[str] = []
+    if (root / actlib.LEGACY_RULES_FILE).is_file():
+        # The project's rule file is still at its old place (or both places hold one): no rule file is written
+        # and no package synced until update.py has moved it or the owner has merged the two; the start says so.
+        return printed, pending
     # What active packages bring (import blocks, disabled rules, skill and role copies) goes first: the scope below
     # reads the marks it leaves. A package that is not intact is named every start, its files stay as they are.
     try:

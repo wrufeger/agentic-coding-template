@@ -6,7 +6,7 @@
 #          another project or for the Owner's profile (`--profile`). Built on
 #          .act/scripts/settings_format.py (data model, parser, serializer, secrets scan) and
 #          reuses .act/scripts/rules.py's project-file parser/classifier instead of re-reading
-#          docs/ai/rules.md or docs/project/coding_rules.md by hand. See settings_format.py's own
+#          docs/ai/local/rules.md or docs/project/coding_rules.md by hand. See settings_format.py's own
 #          docstring for the full detail.
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
@@ -175,7 +175,7 @@ def _entry_for_group(symbol: str, group_id: str, project_group: Optional["rules.
 
 def build_rules_area(root: Path, show_all: bool) -> Optional[sf.SettingsArea]:
     area_def = rules.AREAS["core"]
-    path = root / area_def.project_file
+    path = root / actlib.project_rules_file(root)  # the old place for a project update.py has not moved yet
     if not path.is_file():
         return None
     project = rules.parse_project_file(path, area_def)

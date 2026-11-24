@@ -23,11 +23,12 @@ without that, report it as unproven, not as absent. A commit hash named as evide
 summary: project changes beat template defaults; overrides live under docs/ai/local
 
 A rule or file the project has changed always wins over the template's version. Never edit anything
-under `.act/` directly; a project-specific version goes into `docs/ai/local/<same path>`. A bug IN the
-template itself — a script, skill or rule under `.act/` that fails, contradicts another, or provably
-never fires — is reported at once via `feedback.py --add --kind bug` (`feedback: local`: a backlog
-entry instead). A worker hands such a bug back with its result and the orchestrator files it.
-Details: `topics/feedback.md`.
+under `.act/` directly; a project-specific version goes into `docs/ai/local/<same path>` (the file
+`docs/ai/local/rules.md` is the project's rule file, not an override). A bug IN the template itself —
+a script, skill or rule under `.act/` that fails, contradicts another, or provably never fires — is
+reported at once via `feedback.py --add --kind bug` (`feedback: local`: a backlog entry instead). A
+worker hands such a bug back with its result and the orchestrator files it. Details:
+`topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English
 
@@ -36,7 +37,7 @@ summary: docs in language-docs whatever the chat language; .act/ English; human 
 Everything the assistant writes under `docs/` — journal, questions, tasks, backlog, inbox,
 new documentation — is in `language-docs` (`docs/ai/config.md`, default `en`), whatever the chat
 language. `.act/` stays English, as does what the mechanism generates (the
-board, the generated parts of `docs/ai/rules.md`); rules and overrides the project adds there are in
+board, the generated parts of `docs/ai/local/rules.md`); rules and overrides the project adds there are in
 `language-docs`; identifiers follow `R-code-language`. Text a person wrote stays in its original
 language; translating it is a separate, explicit assignment. A file whose line 1 is
 `<!-- act:default -->` is English scaffold, translated only through the inbox entry

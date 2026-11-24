@@ -197,7 +197,7 @@ def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
     return new
 
 
-_PROPOSAL_PLACES = {"rules": "`docs/ai/rules.md`", "coding": "`docs/project/coding_rules.md`",
+_PROPOSAL_PLACES = {"rules": f"`{actlib.RULES_FILE}`", "coding": "`docs/project/coding_rules.md`",
                     "checklists": "`docs/ai/local/checklists/`", "config": "`docs/ai/config.md`"}
 
 
@@ -212,6 +212,8 @@ def proposal_question(root: Path, item: dict) -> tuple[str, str]:
 
     target, author = item["target"], item["author"]
     place = _PROPOSAL_PLACES.get(target, target)
+    if target == "rules" and not (root / actlib.RULES_FILE).is_file() and (root / actlib.LEGACY_RULES_FILE).is_file():
+        place = f"`{actlib.LEGACY_RULES_FILE}`"  # a project on the old layout: update.py has not moved it yet
     wording = (item["body"] or "").strip("\n") or item["title"]
     old = "\n".join(f"> {line}" if line.strip() else ">" for line in wording.split("\n"))
     title = loc(f"Take over into {target}: {item['title']}", f"In {target} übernehmen: {item['title']}")

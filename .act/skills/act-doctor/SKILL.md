@@ -23,7 +23,7 @@ and read the rest as hints. `doctor.py` decides.
 ## Content (on request, or for rules and skills an update just changed)
 
 For each new or changed template rule ID **and skill**, compare it against the project's own rules (the sections
-marked `act:own-rules` and `act:overrides` in `docs/ai/rules.md` and `docs/project/coding_rules.md`, `replaces`
+marked `act:own-rules` and `act:overrides` in `docs/ai/local/rules.md` and `docs/project/coding_rules.md`, `replaces`
 entries), its overrides under `docs/ai/local/` and its own skills — only that cross-product. After an update,
 `act-update` bundles all hits into one question (its step 6). Same comparison, other direction, for two
 projects' own rules on `act-load-settings`. Three findings, three offers, **never a silent fix**:

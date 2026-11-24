@@ -34,7 +34,7 @@ is reported, never silent.
    (risky frontmatter, shadowing, a bad path, ...). That file stays in `.act-local/import/`, named
    in the output with the reason, for the next `apply --yes`/`--judgments` run to pick it up — or
    for `apply --resolve` (step 7) to file it away by hand. Writes what is now clear:
-   rules/coding into `docs/ai/rules.md` / `docs/project/coding_rules.md`; bundled scripts,
+   rules/coding into `docs/ai/local/rules.md` / `docs/project/coding_rules.md`; bundled scripts,
    checklists, agents and skills into `docs/ai/local/<area>/<name>`, own topic rules and topic
    overrides into `docs/ai/local/rules/topics/<name>.md`, the project's format files (only `commit.md`,
    `changelog.md`, `release-notes.md`, `project-readme.md`) into `docs/project/formats/<name>` — a format file

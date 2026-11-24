@@ -2029,7 +2029,7 @@ def _attempt(problems: list[str], what: str, step: "Callable[[], object]") -> No
 
 def _snapshot(root: Path, plan: Optional["package_load.Plan"]) -> dict[str, Optional[bytes]]:
     """The bytes (None = the file does not exist) of every project file the loading can write: what the plan writes,
-    `docs/ai/rules.md` (the cut of its import lines) and the generated-file cache."""
+    `docs/ai/local/rules.md` (the cut of its import lines) and the generated-file cache."""
     rels = set(plan.writes) if plan is not None else set()
     return {rel: _current(root, rel) for rel in sorted(rels | {package_load.RULES_MD, CACHE_REL})}
 

@@ -131,7 +131,7 @@ def _fallback(part: int) -> None:
         except Exception:  # noqa: BLE001
             pass
         _print_context(sentence or (
-            "Worker rules could not be assembled: read CLAUDE.md, docs/ai/rules.md and the files it "
+            "Worker rules could not be assembled: read CLAUDE.md, docs/ai/local/rules.md and the files it "
             "imports from .act/rules/shared/ before your first step; skip .act/rules/orchestrator/."))
     except Exception:  # noqa: BLE001
         pass

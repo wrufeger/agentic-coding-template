@@ -1750,7 +1750,7 @@ def _run_worker_rules(part_arg: str) -> int:
     except Exception:  # noqa: BLE001 — a missing or broken module must not break the worker start
         if part == 1:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": (
-                "Worker rules could not be assembled: read CLAUDE.md, docs/ai/rules.md and the files it "
+                "Worker rules could not be assembled: read CLAUDE.md, docs/ai/local/rules.md and the files it "
                 "imports from .act/rules/shared/ before your first step; skip .act/rules/orchestrator/.")}}))
     return 0
 

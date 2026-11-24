@@ -26,7 +26,7 @@ preference to this one), removed by the same step under the same condition.
 | `.act/coding/` | coding rule sets (`CR-<set>-<group>`), one file per language or framework |
 | `.act/scripts/` | `init.py` (set up or adopt a project), `rules.py` (read the effective rules), `board.py`, `manifest.py`, `actlib.py` |
 | `.act/hooks/dispatch.py` | one entry point per session event: write guard for `.act/**`, session start |
-| `.act/bridges/` | the files `init.py` generates in a project (`CLAUDE.md`, `AGENTS.md`, `docs/ai/rules.md`, hooks, git files) |
+| `.act/bridges/` | the files `init.py` generates in a project (`CLAUDE.md`, `AGENTS.md`, `docs/ai/local/rules.md`, hooks, git files) |
 | `.act/skeleton/` | starting files for `docs/ai/` — config, whiteboard rules, inbox, working memory |
 | `CHANGELOG.md` | changes to the template itself; `init` removes it under the same condition as this README, a project keeps its own |
 

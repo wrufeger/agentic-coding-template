@@ -31,7 +31,7 @@
 #   python .act/scripts/settings_load.py apply [<file...>] [--judgments PATH] [--yes] [--non-interactive]
 #                                               [--resolve FILE=ACTION ...]
 #       Same analysis, then writes: new/identical/judged-non-contradicting rules into
-#       docs/ai/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/topics/agents/
+#       docs/ai/local/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/topics/agents/
 #       skills into docs/ai/local/<area>/<name> and format files into docs/project/formats/<name>
 #       (shown before writing unless --yes; a format file is accepted only under one of the four names
 #       the template ships under .act/formats/) — an
@@ -589,13 +589,19 @@ def _flatten_lines(text: str) -> str:
     return " / ".join(line.strip() for line in text.splitlines() if line.strip())
 
 
+def area_file(root: Path, area: "rules.Area") -> str:
+    """Root-relative rule file of `area` as it is in this project: for the core area through
+    actlib.project_rules_file, so a project still on the old layout is read and written at its old place."""
+    return actlib.project_rules_file(root) if area.project_file == actlib.RULES_FILE else area.project_file
+
+
 def load_target(root: Path) -> dict[str, TargetArea]:
     """Keyed by the settings-file area name ("rules"/"coding"), not rules.py's own ("core"/"coding")
     — see SETTINGS_TO_RULES_AREA."""
     out: dict[str, TargetArea] = {}
     for area_name, rules_area_name in SETTINGS_TO_RULES_AREA.items():
         area = rules.AREAS[rules_area_name]
-        path = root / area.project_file
+        path = root / area_file(root, area)
         project = rules.parse_project_file(path, area) if path.is_file() else None
         ta = TargetArea(area=area, project=project)
         if project is not None:
@@ -741,7 +747,7 @@ def _dead_message(gid: str, corpus: "doctor.TemplateCorpus", kind: str) -> str:
     return f"`{gid}` no longer exists in the current template — not applied"
 
 
-# An own-rule id becomes a backtick-wrapped Markdown identifier in docs/ai/rules.md /
+# An own-rule id becomes a backtick-wrapped Markdown identifier in docs/ai/local/rules.md /
 # docs/project/coding_rules.md ("- `<id>`: ..."); a backtick, pipe or newline in it would break
 # that rendering (or, for a pipe, a table row elsewhere), so anything outside this set is refused
 # rather than written verbatim.
@@ -1110,7 +1116,7 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
 
 
 def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
-    """Writes docs/ai/rules.md and docs/project/coding_rules.md for every resolution marked
+    """Writes docs/ai/local/rules.md and docs/project/coding_rules.md for every resolution marked
     "apply". Returns one (message, applied) pair per rule touched — `applied` is False for a
     no-op report ("already switched off") so a caller's summary line does not count it as a
     change (see _toggle_group_off)."""
@@ -1125,7 +1131,7 @@ def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
 
     for area_name, resolutions in by_area.items():
         rules_area = rules.AREAS[SETTINGS_TO_RULES_AREA[area_name]]
-        path = root / rules_area.project_file
+        path = root / area_file(root, rules_area)
         lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
         own_lines = [_own_rule_line(r.entry) for r in resolutions if r.entry.symbol == "+"]
         replaces_lines = [_replaces_line(r.entry) for r in resolutions if r.entry.symbol == "~"]

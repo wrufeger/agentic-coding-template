@@ -6,7 +6,7 @@
 #          packages.py `add`/`remove` and the session start call sync_packages(), doctor.py and protected_watch
 #          read the same plan. Format of a package: `.act/formats/package.md`.
 # What it does, all of it derived from the lock and the package folders, nothing from memory:
-#   docs/ai/rules.md   two marked blocks of "@" lines (rules.apply_package_blocks) -- the package's rule files,
+#   docs/ai/local/rules.md   two marked blocks of "@" lines (rules.apply_package_blocks) -- the package's rule files,
 #                      coding sets and topics, pre before the template's rule imports, post before the overrides --
 #                      and the rules a package `disables` unchecked with a mark (rules.apply_package_marks). A rule
 #                      file all of whose rules are off this way loses its "@" through act_profile.read_cut(), like
@@ -53,7 +53,7 @@ import rules
 import tiers
 import unit_copies
 
-RULES_MD = "docs/ai/rules.md"
+RULES_MD = actlib.RULES_FILE
 PACKAGES_DIR = ".act-local/packages"
 COPIES_KEY = "package_copies"
 SIDES = ("pre", "post")
@@ -562,7 +562,7 @@ def _has_role_marks(root: Path) -> bool:
 
 
 def marked_owners(text: str) -> dict[str, str]:
-    """{rule id: package id} for every rule line of docs/ai/rules.md `text` that carries a package mark."""
+    """{rule id: package id} for every rule line of docs/ai/local/rules.md `text` that carries a package mark."""
     found: dict[str, str] = {}
     for line in text.split("\n"):
         mark = act_profile.PACKAGE_MARK_RE.search(line.rstrip("\r"))
@@ -589,7 +589,7 @@ def _rules_text(current: str, pkgs: dict[str, Package], marks_text: Optional[str
 
 
 def rules_text(root: Path, text: str, packages: dict[str, dict]) -> str:
-    """`text` of docs/ai/rules.md (or the template's bridge text for it) as it is with `packages` (the lock's record):
+    """`text` of docs/ai/local/rules.md (or the template's bridge text for it) as it is with `packages` (the lock's record):
     the import blocks and the marks of disabled rules. For the bridge refresh, so a re-derived file keeps them."""
     try:
         marks_text = (root / RULES_MD).read_bytes().decode("utf-8")
@@ -839,7 +839,7 @@ def _write_record(root: Path, record: dict[str, dict], restored: dict[str, dict]
 
 
 def sync_packages(root: Path, write: bool = True, *, strict: bool = False) -> list[str]:
-    """Apply load_writes(root, <the lock's packages>) and bring the import lines of docs/ai/rules.md in line with
+    """Apply load_writes(root, <the lock's packages>) and bring the import lines of docs/ai/local/rules.md in line with
     the scope (rules.sync_core_cut). Returns the project paths it changed, or with `write=False` would change.
     A project without a readable `.act-lock.json` is left alone. Copies are recorded under the lock's
     `package_copies`. Not intact packages are skipped and named by plan_for(); never deletes or overwrites a

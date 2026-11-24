@@ -90,7 +90,7 @@ The orchestrator writes them; a worker drafts under `.act-local/adopt/drafts/<sa
     `.act/bridges/coding_rules.md` and propose a place per part; the human decides: every coding session → own rule, one
     imperative line; only some paths → `.claude/rules/<area>.md` with `paths:`; tied to a framework version → its own rule
     set; origin, incident, evidence → project docs; derivable from code → dropped or `stack`; doubles a template rule →
-    dropped. Own rules go through `adopt_passages.py --into coding`, or for `docs/ai/rules.md` as a ``- `ID`: text`` line.
+    dropped. Own rules go through `adopt_passages.py --into coding`, or for `docs/ai/local/rules.md` as a ``- `ID`: text`` line.
   - Check: `rules.py --list` and `--area core --list` show overrides `[~]` and own rules `[+]`; `--validate` must not name a
     `note:` or an `unclosed code fence` there (that text is not read: rewrite as bullets). A rule in neither list is not in force.
   - Record the decision per rule in the `note` of its table row.

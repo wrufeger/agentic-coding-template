@@ -133,7 +133,7 @@ def template_remotes(root):
 # "generated" hashes — nothing there expects a 4th entry.
 BRIDGES: dict[str, BridgeSpec] = {
     "AGENTS.md": {"dest": "AGENTS.md", "tool": None, "kind": "verbatim"},
-    "rules.md": {"dest": "docs/ai/rules.md", "tool": None, "kind": "verbatim"},
+    "rules.md": {"dest": actlib.RULES_FILE, "tool": None, "kind": "verbatim"},
     "coding_rules.md": {"dest": "docs/project/coding_rules.md", "tool": None, "kind": "coding-rules"},
     "CLAUDE.md": {"dest": "CLAUDE.md", "tool": "claude-code", "kind": "verbatim"},
     "settings.hooks.json": {"dest": ".claude/settings.json", "tool": "claude-code", "kind": "json-merge"},
@@ -2092,7 +2092,7 @@ def _merge_settings_hooks(
 CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics", "agents", "packages")
 # What each category takes along from the source project:
 #   skills      own skills: docs/ai/local/skills/<name>/ where .act/skills/<name> does not exist
-#   rules       the "## Own rules" section of docs/ai/rules.md and docs/project/coding_rules.md
+#   rules       the "## Own rules" section of docs/ai/local/rules.md and docs/project/coding_rules.md
 #   exceptions  rule groups switched off (checkbox unchecked) in those two files, with their reason
 #   overrides   the "## Overrides" `replaces` lines of those two files, and every other file under
 #               docs/ai/local/ (rule, script and checklist overrides or own ones, and an override of
@@ -2141,8 +2141,12 @@ def _as_carry(carry: "frozenset[str] | bool") -> frozenset[str]:
 
 
 def _local_file_category(source_root: Path, rel_to_local: Path) -> str:
-    """The carry category of one file under the source's docs/ai/local/ (see CARRY_CATEGORIES)."""
+    """The carry category of one file under the source's docs/ai/local/ (see CARRY_CATEGORIES). The source's
+    rule file directly there is no override: its content goes through _carry_over_area, so the file itself
+    gets a category no `carry` ever holds."""
     parts = rel_to_local.parts
+    if parts == (Path(actlib.RULES_FILE).name,):
+        return "rule-file"
     if parts and parts[0] == "skills":
         if len(parts) > 2 and (source_root / ".act" / "skills" / parts[1]).is_dir():
             return "overrides"  # an override of a template skill, not an own skill
@@ -2209,7 +2213,7 @@ def _insert_after_mark(text: str, mark_name: str, new_lines: list[str]) -> tuple
 def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bool,
                       dest_was_preexisting: bool, notes: list[str],
                       carry: frozenset[str] = frozenset(CARRY_CATEGORIES)) -> Optional[str]:
-    """One area (docs/ai/rules.md or docs/project/coding_rules.md): copy the source project's
+    """One area (docs/ai/local/rules.md or docs/project/coding_rules.md): copy the source project's
     switched-off groups (with their reason) and its '## Overrides'/'## Own rules' sections into
     the target's freshly materialized file of the same area -- only for a group id the target file
     already carries a checkbox line for; of the `use:` selection only a set switched off with a
@@ -2222,7 +2226,12 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
     (`replaces` lines), rules (`## Own rules`)."""
     if not carry & {"exceptions", "overrides", "rules"}:
         return None
-    source_path = source_root / area.project_file
+    # A source project on the old layout still has its rule file at docs/ai/rules.md; the new place wins.
+    source_rel = area.project_file
+    if (area.name == "core" and not (source_root / source_rel).is_file()
+            and (source_root / actlib.LEGACY_RULES_FILE).is_file()):
+        source_rel = actlib.LEGACY_RULES_FILE
+    source_path = source_root / source_rel
     dest_path = root / area.project_file
     if not source_path.is_file() or not dest_path.is_file():
         return None
@@ -2230,16 +2239,16 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
         return None
     # Like docs/ai/local/: the source's file as last committed (HEAD), never its working tree --
     # an edit not committed there is named, not taken along.
-    head_bytes = _git_head_blob_bytes(source_root, area.project_file)
+    head_bytes = _git_head_blob_bytes(source_root, source_rel)
     if head_bytes is None:
         notes.append(
-            f"{area.project_file} of the source project is not committed there (no HEAD version) -- "
+            f"{source_rel} of the source project is not committed there (no HEAD version) -- "
             "its rule choices were not carried over; commit it in the source project and copy them by hand."
         )
         return None
-    if _git_differs_from_head(source_root, area.project_file):
+    if _git_differs_from_head(source_root, source_rel):
         notes.append(
-            f"{area.project_file} of the source project has uncommitted edit(s) -- carried over as last "
+            f"{source_rel} of the source project has uncommitted edit(s) -- carried over as last "
             "committed there (HEAD), the working-tree edits were not taken along; commit them in the "
             "source project and copy them by hand."
         )
@@ -2806,7 +2815,7 @@ def _owner_profile_bridge_paths(root: Path, result) -> list[Path]:
 
 
 def _resolution_area_files(root: Path, result) -> list[Path]:
-    """The rule files (docs/ai/rules.md, docs/project/coding_rules.md) `settings_load.
+    """The rule files (docs/ai/local/rules.md, docs/project/coding_rules.md) `settings_load.
     write_resolutions()` edits for the entries it applies -- for the caller's commit pathspec. In a
     full run those files are already among step 6's `touched_bridges`; a profile-only run
     (run_profile_only, `init.py --profile` in a set-up project) has no such list and would otherwise
@@ -2820,7 +2829,7 @@ def _resolution_area_files(root: Path, result) -> list[Path]:
         area_key = settings_load.SETTINGS_TO_RULES_AREA.get(resolution.entry.area)
         if area_key is None:
             continue
-        path = root / rules.AREAS[area_key].project_file
+        path = root / settings_load.area_file(root, rules.AREAS[area_key])
         if path not in files:
             files.append(path)
     return files
@@ -2923,7 +2932,7 @@ def step_packages(root: Path, plan: bool, source_checkout: Optional[Path], carry
     """After the lock is written (step 9): carry the source project's active packages into the target RESTING
     (`--target` from a project, category `packages` of `--carry`: folder and zip, never a lock entry; a package the
     target's lock already has is left as it is, see `_carry_package`), then load whatever packages the target's OWN lock
-    records (package_load.sync_packages: import blocks in docs/ai/rules.md, skill and role copies), also when the target
+    records (package_load.sync_packages: import blocks in docs/ai/local/rules.md, skill and role copies), also when the target
     was docked onto a project that had packages. Silent (None) for a run with nothing to carry and no package in the
     target. Returns (summary, the project paths to commit): a carried package is under `.act-local/`, which is not
     versioned, so it adds none."""
@@ -3128,6 +3137,11 @@ def step_materialize(
 
     for key, spec in selected_bridges.items():
         dest = root / spec["dest"]
+        if spec["dest"] == actlib.RULES_FILE and not dest.is_file() and (root / actlib.LEGACY_RULES_FILE).is_file():
+            # the project's rule file is still at its old place: never a second one beside it
+            messages.append(f"{actlib.LEGACY_RULES_FILE}: still at its old place, {actlib.RULES_FILE} not created "
+                            "(`python .act/scripts/update.py` moves it)")
+            continue
         if spec["kind"] == "verbatim":
             message, created = _write_text_file(
                 bridges_dir / key, dest, tokens, plan, root, force=spec["dest"] in force_recreate,
@@ -3726,7 +3740,7 @@ def step_lock_and_cache(
     gets the shipped migrations recorded as applied.
     `generated_hashes`: the fingerprint of each generated bridge
     exactly as step 6 wrote it -- read by main() right after step_materialize, *before* the same
-    run's carry-over (Weg C, owner profile) edits docs/ai/rules.md or coding_rules.md (a group
+    run's carry-over (Weg C, owner profile) edits docs/ai/local/rules.md or coding_rules.md (a group
     switched off with its reason, an own rule). Hashing here, after those edits, used to record
     the edited state as "generated": the first session start (checks/session.py _refresh_bridges,
     likewise update.py's refresh) then saw an "unchanged" bridge and wrote it back raw from
@@ -3782,7 +3796,7 @@ def step_lock_and_cache(
             shipped = {p.stem for p in (root / ".act" / "migrations").glob("[0-9][0-9][0-9]-*.py")}
             lock_update["migrations_applied"] = sorted(shipped)
         actlib.write_lock(lock_update)
-        # A docs/ai/rules.md this run made (a copy of the template's, or one carried over from a source
+        # A docs/ai/local/rules.md this run made (a copy of the template's, or one carried over from a source
         # project) has been offered every rule and rule file of this .act/: the first update must not
         # enter again what the file leaves out on purpose. One that was there before and stays (docking
         # onto a project) has not been offered what it does not list. Union with an earlier record.
@@ -4229,7 +4243,7 @@ def run_profile_only(root: Path, plan: bool, interactive: bool, no_commit: bool,
     without a question, whatever needs a verdict goes to the settings inbox) -- then a commit of
     the paths that step wrote plus its own inbox note, if any. Nothing of a full run: no step 2
     (the branch rename and orphan rebuild the guard in main() exists to prevent), no bridges, no
-    skeleton, no lock, and no .act-local/cache.json rewrite either -- a docs/ai/rules.md the
+    skeleton, no lock, and no .act-local/cache.json rewrite either -- a docs/ai/local/rules.md the
     profile changed then no longer matches its recorded hash, which is exactly the "edited locally,
     left alone" state the session-start bridge refresh preserves (checks/session.py
     _refresh_bridges); re-recording the hash would hand the file back to that refresh."""
@@ -4494,7 +4508,7 @@ def _step_materialize_all(root: Path, plan: bool, interactive: bool, cfg: Projec
                           selected_bridges, verify_commit: str) -> _Materialized:
     """Step 6: skeleton, bridges and copies, the three offer notes, then the carry-over from the
     source project and owner profile (--target) or the owner profile alone (in place)."""
-    # Whether the target already had its own docs/ai/rules.md / coding_rules.md *before*
+    # Whether the target already had its own docs/ai/local/rules.md / coding_rules.md *before*
     # this run -- captured here, before step_materialize can create either from the skeleton, so
     # `_carry_over_area` only ever touches a file this run itself materialized, never a docked
     # project's own already-established checkbox choices.
@@ -4509,7 +4523,7 @@ def _step_materialize_all(root: Path, plan: bool, interactive: bool, cfg: Projec
         pending_booking=pending_booking,
     )
     # Fingerprint of every generated bridge exactly as written -- taken now, before this step's
-    # carry-over below (Weg C / owner profile) may edit docs/ai/rules.md or coding_rules.md; step 9
+    # carry-over below (Weg C / owner profile) may edit docs/ai/local/rules.md or coding_rules.md; step 9
     # records these instead of re-hashing the edited files (see step_lock_and_cache). Besides that
     # carry-over only the working-methods step (`step_methods`, after step 8) edits a generated file --
     # the methods section of docs/project/coding_rules.md; step 7 writes .gitignore/.gitattributes,
@@ -4626,7 +4640,7 @@ def main(argv: list[str]) -> int:
     notes: list[str] = []
     # Before any step can write the lock: only a project without one is fresh (step 9).
     lock_existed_before = (root / ".act-lock.json").exists()
-    # Whether docs/ai/rules.md is this run's own work (step 9 records what it was offered).
+    # Whether docs/ai/local/rules.md is this run's own work (step 9 records what it was offered).
     rules_md_existed_before = (root / rules.AREAS["core"].project_file).is_file()
 
     cfg = _step_config_report(root, plan, interactive, notes, args, methods_given, source_act)

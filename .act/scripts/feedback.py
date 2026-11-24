@@ -517,7 +517,7 @@ def _metrics(root: Path) -> dict:
 
 _RULE_CHANGE_AREAS = {
     "rules": ".act/rules", "coding": ".act/coding",
-    "coding_rules_md": "docs/project/coding_rules.md", "core_rules_md": "docs/ai/rules.md",
+    "coding_rules_md": "docs/project/coding_rules.md", "core_rules_md": "docs/ai/local/rules.md",
     "skills": ".act/skills", "scripts": ".act/scripts",
 }
 

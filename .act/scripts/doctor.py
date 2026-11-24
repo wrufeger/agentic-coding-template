@@ -42,7 +42,7 @@
 #               (the old scripts are gone). Never touches either file, only reports.
 #           14. an @-import Claude Code cannot follow from CLAUDE.md (relative to the
 #               importing file, at most four hops, rules.resolve_imports), every rule file
-#               under .act/rules/shared|orchestrator/ docs/ai/rules.md names but does not import,
+#               under .act/rules/shared|orchestrator/ docs/ai/local/rules.md names but does not import,
 #               and every checked coding set that does not load.
 #           15. leftover files under docs/ai/questions/ (besides its own README.md) — questions
 #               live in docs/ai/inbox/ (kind: question) since the one-inbox format; a project
@@ -91,7 +91,7 @@
 #               (docs-file-long); a docs/README.md index line pointing below a subfolder of docs/
 #               (docs-index-deep). Nothing with the switch off.
 #          23. the size of the always-loaded own rules (the sections marked `act:own-rules` in
-#               docs/ai/rules.md and docs/project/coding_rules.md together): one warning above the
+#               docs/ai/local/rules.md and docs/project/coding_rules.md together): one warning above the
 #               budget `own-rules-budget` in docs/ai/config.md (default 6000 characters, `off` or `0`
 #               skips it), with the characters, the budget, about 0.386 tokens per character and up to
 #               five lines that read like history (a date, an entry identifier, "formerly ... since
@@ -1120,7 +1120,10 @@ def check_override_orphans(root: Path) -> list[Finding]:
         if not path.is_file() or path.name.lower() == "readme.md" or "__pycache__" in path.parts:
             continue
         rel = path.relative_to(local)
-        if len(rel.parts) < 2 or rel.parts[0] in _OVERRIDE_SKIP_DIRS:
+        # A file directly in docs/ai/local/ is the project's own, never an override: that includes its rule
+        # file docs/ai/local/rules.md, which has no counterpart under .act/ and must never be reported as an
+        # orphan. The same rule decides actlib.resolve, so the two cannot drift apart.
+        if actlib.is_direct_local_file(rel.as_posix()) or rel.parts[0] in _OVERRIDE_SKIP_DIRS:
             continue
         if (act / rel).exists():
             continue
@@ -1474,7 +1477,7 @@ _UNRESOLVED_RE = re.compile(r"^(?P<path>.*?):(?P<line>\d+): (?P<message>.*)$")
 def check_imports(root: Path) -> list[Finding]:
     """14. What Claude Code actually loads, followed from CLAUDE.md exactly the way it does
     (rules.resolve_imports): every import it cannot follow, and every rule file that should load
-    but does not — a rule file under .act/rules/shared|orchestrator/ (named in docs/ai/rules.md
+    but does not — a rule file under .act/rules/shared|orchestrator/ (named in docs/ai/local/rules.md
     but not imported, or not named there at all) and every checked coding set. Formerly the
     imports resolved against the wrong folder and not one rule file loaded; this is the check
     that would have shown it. Skipped without a CLAUDE.md (Claude Code is not a configured tool)."""
@@ -1503,7 +1506,7 @@ def check_imports(root: Path) -> list[Finding]:
             if rel in loaded:
                 continue
             wanted = rules.import_path(rel, core_rel)
-            # Only a file docs/ai/rules.md names without importing it (backticks, the older
+            # Only a file docs/ai/local/rules.md names without importing it (backticks, the older
             # "@.act/..." form) — one whose line was dropped is switched off on purpose, as the
             # bridge offers ("drop an import line to switch off its whole area"); a file new in
             # the template reaches an unchanged copy through the bridge refresh.
@@ -2101,7 +2104,7 @@ def check_docs_order(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# 8c. Size of the always-loaded own rules — the "Own rules" sections of docs/ai/rules.md and
+# 8c. Size of the always-loaded own rules — the "Own rules" sections of docs/ai/local/rules.md and
 #     docs/project/coding_rules.md load at every start, so a long one costs in every session. One
 #     warning above a budget (`own-rules-budget` in docs/ai/config.md, default 6000 characters,
 #     `off` or `0` skips the check), never a block; with it up to five lines that read like history.
@@ -2109,7 +2112,7 @@ def check_docs_order(root: Path) -> list[Finding]:
 
 OWN_RULES_BUDGET_DEFAULT = 6000
 OWN_RULES_TOKENS_PER_CHAR = 0.386
-OWN_RULES_FILES = ("docs/ai/rules.md", "docs/project/coding_rules.md")
+OWN_RULES_FILES = (rules.AREAS["core"].project_file, rules.AREAS["coding"].project_file)
 OWN_RULES_HISTORY_MAX = 5
 _OWN_HISTORY_PATTERNS = (
     re.compile(r"\b20\d\d-\d\d-\d\d\b"),  # a date
@@ -2827,7 +2830,7 @@ def _shown_path(root: Path, path: Path) -> str:
 
 def _carrying_files(root: Path, sentence: str, roles: list[str]) -> dict[str, list[Path]]:
     """role -> the files that carry `sentence` for it (normalised containment): the role's own bridge
-    `.claude/agents/<role>.md` (and the base role's, for a `<role>-high`), the own rules `docs/ai/rules.md` and
+    `.claude/agents/<role>.md` (and the base role's, for a `<role>-high`), the own rules `docs/ai/local/rules.md` and
     `docs/project/coding_rules.md`, and every rule file the workers load (rules.claude_md_files). A role no file
     carries it for is left out."""
     needle = _normalise_sentence(sentence)
@@ -2838,7 +2841,7 @@ def _carrying_files(root: Path, sentence: str, roles: list[str]) -> dict[str, li
         except (OSError, UnicodeDecodeError):
             return False
 
-    shared: list[Path] = [root / "docs" / "ai" / "rules.md", root / "docs" / "project" / "coding_rules.md"]
+    shared: list[Path] = [root / rules.AREAS["core"].project_file, root / rules.AREAS["coding"].project_file]
     try:
         shared += [path for _label, path in rules.claude_md_files(root, Path.home(), True)]
     except Exception:  # noqa: BLE001 -- an unreadable import chain: the own rules files alone

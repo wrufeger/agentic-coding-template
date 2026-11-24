@@ -13,13 +13,13 @@ this file directly for anything those two miss — it stays a plain table, not a
 | `docs/project/` | The project's documentation as it is now; its `README.md` has one line per file and subfolder, each folder of five or more entries has one of its own (`R-docs-order`). Starts with `coding_rules.md` (which rule sets are on for this stack) and `glossary.md` (the project's own terms) | <today> | before writing or reviewing code; when a term is unclear; to find a document, read the `README.md` of its folder |
 | `docs/ai/config.md` | Project configuration — steers the assistant | <today> | before any task; re-read after a change |
 | `docs/ai/board.md` | Board — generated overview of what is open (not versioned by default, see `board` in `config.md`) | <today> | at session start, for the current picture |
-| `docs/ai/rules.md` | Orchestrator-only rule digest, loaded at session start | <today> | orchestrator, every session (automatic) |
+| `docs/ai/local/rules.md` | The project's rule file (checkboxes, your own rules), loaded at session start; not an override | <today> | orchestrator, every session (automatic) |
 | `docs/ai/whiteboard-<identity>.md` | One whiteboard per person: your own ideas, bugs, notes and reminders, picked up at the next session start; rules in `docs/ai/README.md` | <today> | whenever you have an idea or want a reminder; the assistant when the session start names new or due entries |
 | `docs/ai/inbox/` | Things waiting for a decision: questions (proposed rule changes too), tasks for a human, tool reports, notes | <today> | at session start, and before starting a new task |
 | `docs/ai/work/tasks/`, `docs/ai/work/backlog/` | Open tasks (the assistant's own work) and backlog items | <today> | when picking a task or grooming the backlog |
 | `docs/ai/work/ledger/` | Journal — one entry per file, newest first | <today> | to see recent activity; `board.py` reads it too |
 | `docs/ai/work/archive/` | Journal collections (`ledger-*.md`), `legacy/` and `proposals/`; finished tasks, backlog items, inbox entries and concepts too, until `act-compact` folds them into monthly files | <today> | rarely — history, not current state |
-| `docs/ai/local/` | This project's own overrides of template files | <today> | whenever the matching template file changes |
+| `docs/ai/local/` | This project's own overrides of template files (the rule file `rules.md` and your own files directly in it are not overrides) | <today> | whenever the matching template file changes |
 | `docs/ai/local/resources.md` | Your own reading list: own sources and private links; the template's maintained list is on the documentation site under "Further reading" | <today> | when looking for background reading, and to add a source |
 
 This index names folders and top-level files only. A document created later under `docs/project/`

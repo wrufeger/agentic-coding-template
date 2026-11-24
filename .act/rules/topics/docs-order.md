@@ -60,7 +60,7 @@ All six kinds are findings like any other (exit 1); none rewrites a file.
 
 `docs-order` in `docs/ai/config.md` § Checks: `warn` (the default, also while the row is missing), `block`
 (counts as `warn`, since the check only reports) or `off` (nothing is reported). A project that orders its
-docs differently switches the check off, or replaces the rule in `docs/ai/rules.md`.
+docs differently switches the check off, or replaces the rule in `docs/ai/local/rules.md`.
 
 ## Moving a document
 

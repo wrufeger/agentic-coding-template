@@ -69,7 +69,7 @@ and roles (under `docs/ai/local/`) are never cut.
 `exclude`: `none`, or a comma-separated list of what to leave out on top of the profile — the name of a
 template skill (`act-seo`), of a template role (`test-writer`), of a rule file (`orchestrator/30-cost.md`)
 or of a topic (`logging`, or `topics/logging.md`). Rule files fall only by name, never by profile. A rule
-file stays under `.act/`, but its line in `docs/ai/rules.md` loses the `@` and Claude Code stops loading
+file stays under `.act/`, but its line in `docs/ai/local/rules.md` loses the `@` and Claude Code stops loading
 it (so do the sub-agents); an excluded topic is no longer named at the session start. `shared/10-safety.md`
 cannot be excluded (a warning, the entry is ignored), and an unknown name only gives a warning. The checks under
 § Checks stay in force either way: their blocks do not depend on rule text.
@@ -290,7 +290,7 @@ refuses") treats `block` as `warn`.
 | :--- | :--- | :--- |
 | `template-write-guard` | block | writes under `.act/` — put a project version in `docs/ai/local/<same path>` instead |
 | `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` only reports what it would refresh (once per change, not at every start) and writes nothing (one exception: a missing `.act-local/identity.json` is still created from `git config user.name`), here and in `update.py`'s bridge step; `off` skips it, and `update.py` then only reports too |
-| `orchestrator-rules` | block | fallback only: while `docs/ai/rules.md` does not import the orchestrator-only rules (an older, locally changed copy), the session start names them in short; `off` skips it |
+| `orchestrator-rules` | block | fallback only: while `docs/ai/local/rules.md` does not import the orchestrator-only rules (an older, locally changed copy), the session start names them in short; `off` skips it |
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `worker-write-scope` | block | a worker writing outside its assignment's `Write scope:` line (`R-cost-delegate`) — `warn` reports without blocking, `off` skips it |
 | `worker-scope-overlap` | block | a worker start whose `Write scope:` overlaps that of a worker still running — `none` overlaps nothing, a missing line counts as everything (`R-cost-delegate`); a `Tests:` line (the tree an assignment runs tests in) is compared with the running workers' `Write scope:` and the `Write scope:` with their `Tests:` lines; a finished worker or a failed start frees its scope, a crashed worker after three hours or when its file under `.act-local/worker-scopes/` is deleted; of two starts racing in one message the later one is refused; the orchestrator's own write under a running worker's `Tests:` or test run beside a writing worker only gets a note; limit: a worker continued with `SendMessage` is invisible once ended; `warn` reports without blocking, `off` skips it |
@@ -324,7 +324,7 @@ refuses") treats `block` as `warn`.
 | `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — checked at most once a day — a note that the template has moved on, repeated at every start and shown on the board and in the status line until the update is installed; never refuses, `off` skips both |
 | `docs-order` | warn | `act-doctor` only, never refuses: a folder under `docs/project/` with five or more entries and no `README.md`, a file its `README.md` does not name, an index line without a file, a dead relative link, a concept whose questions are all answered; `block` counts as `warn`, `off` skips it (`R-docs-order`) |
 | `changelog-length` | warn | `act-doctor` only, never refuses: an entry under `[Unreleased]` in `CHANGELOG.md` longer than 250 characters (its lines joined), named with its first words; `block` counts as `warn`, `off` skips it |
-| `own-rules-budget` | 6000 | `act-doctor` only, never refuses: the characters the "Own rules" sections of `docs/ai/rules.md` and `docs/project/coding_rules.md` may have together before one warning names the size and up to five lines that read like history (a date, an entry identifier, "formerly … since …") and the hint to send what of them would help the template as feedback; `off` or `0` skips it |
+| `own-rules-budget` | 6000 | `act-doctor` only, never refuses: the characters the "Own rules" sections of `docs/ai/local/rules.md` and `docs/project/coding_rules.md` may have together before one warning names the size and up to five lines that read like history (a date, an entry identifier, "formerly … since …") and the hint to send what of them would help the template as feedback; `off` or `0` skips it |
 | `own-rules-review` | warn | `act-doctor` and `act-update` only, never refuses: a local skill that overrides a template skill of the same name without `doctor.py --accept skill:<name>`, and after an update one bundled inbox question that sets the new and changed rules and skills of the update against the project's own rules, overrides and skills; `block` counts as `warn`, `off` skips both |
 
 ## Logging

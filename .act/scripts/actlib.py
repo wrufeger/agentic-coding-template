@@ -359,6 +359,37 @@ def repo_root(start: Optional[Path] = None) -> Path:
     )
 
 
+# The project's own rule file (generated from .act/bridges/rules.md, then the owner's) and the place it had
+# in older projects; every script and hook takes the path from here or from rules.AREAS["core"].
+RULES_FILE = "docs/ai/local/rules.md"
+LEGACY_RULES_FILE = "docs/ai/rules.md"
+
+
+def project_rules_file(root: Path) -> str:
+    """Root-relative path of the project's current rule file: the new place if it exists, else the old
+    place if that exists (a project update.py has not moved yet), else the new place. A script that writes
+    into an existing rule file goes through this, so it never makes a second file beside the first."""
+    if not (root / RULES_FILE).is_file() and (root / LEGACY_RULES_FILE).is_file():
+        return LEGACY_RULES_FILE
+    return RULES_FILE
+
+# A file directly under docs/ai/local/ (a path of one part) belongs to the project: its rule file rules.md,
+# reminders.md, resources.md and so on. It is never the override of a file of the same name directly under
+# .act/, even when .act/ has one. The one template file with a documented override of that shape is tips.md.
+ONE_PART_OVERRIDES = frozenset({"tips.md"})
+
+
+def is_direct_local_file(rel: str) -> bool:
+    """True when `rel` (relative to docs/ai/local/) names a file directly in that folder."""
+    return "/" not in rel.replace("\\", "/").strip("/")
+
+
+def override_possible(path: str) -> bool:
+    """Whether the template-relative `path` can have an override under docs/ai/local/: not a file directly in
+    docs/ai/local/, which is the project's own, unless the template documents it (ONE_PART_OVERRIDES)."""
+    return not is_direct_local_file(path) or path in ONE_PART_OVERRIDES
+
+
 def resolve(path: str) -> Optional[tuple[Path, str]]:
     """
     Resolve a template-relative path (e.g. "rules/shared/00-core.md") against the single
@@ -367,12 +398,15 @@ def resolve(path: str) -> Optional[tuple[Path, str]]:
       1. docs/ai/local/<path>  — project override, wins if present
       2. .act/<path>           — template default
 
+    A path of one part is no override candidate (override_possible): docs/ai/local/rules.md is the
+    project's rule file, whatever .act/ holds under the same name.
+
     Returns a (resolved_path, origin) tuple, where origin is "local" or "template", or None if
     neither location has the file.
     """
     root = repo_root()
     local_path = root / "docs" / "ai" / "local" / path
-    if local_path.is_file():
+    if override_possible(path) and local_path.is_file():
         return local_path, "local"
     template_path = root / ".act" / path
     if template_path.is_file():
@@ -503,8 +537,8 @@ def read_lock() -> dict:
 
 def read_rules_offered(root: Path) -> Optional[dict]:
     """The lock's `rules_offered` record at `root`: per rule file of the template (root-relative,
-    e.g. ".act/rules/shared/00-core.md"), the rule IDs docs/ai/rules.md has been offered so far. A file
-    named here that docs/ai/rules.md does not import, or an ID it does not list, was taken out on
+    e.g. ".act/rules/shared/00-core.md"), the rule IDs docs/ai/local/rules.md has been offered so far. A file
+    named here that docs/ai/local/rules.md does not import, or an ID it does not list, was taken out on
     purpose and is not offered again. None when the lock or the field does not exist (a project from
     before this record). Takes `root` explicitly, so it never depends on the working directory."""
     data = _read_json(root / ".act-lock.json")
@@ -534,7 +568,7 @@ def read_lock_at(root: Path) -> Optional[dict]:
 
 def read_rules_cut(root: Path) -> list[str]:
     """The lock's `rules_cut` record at `root`: the rule files (root-relative, e.g.
-    ".act/rules/orchestrator/30-cost.md") whose import line in docs/ai/rules.md the scope
+    ".act/rules/orchestrator/30-cost.md") whose import line in docs/ai/local/rules.md the scope
     (docs/ai/config.md § Scope) switched off itself, so it can switch them on again when the cut
     ends — and leave alone a line the project took out on its own. Empty when there is none."""
     data = _read_json(root / ".act-lock.json")
@@ -1480,7 +1514,7 @@ def translate_note_parts(
             "keys and values, code, paths, and anything a person wrote. Common English technical terms "
             "(Skill, Worker, Override, Inbox, Backlog, Board, Hook, Commit, Branch …) stay as they are, "
             "above all in headings; a short explanation at most once in the text below. Then remove the "
-            "`act:default` line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays "
+            "`act:default` line (line 1) from the file. `docs/ai/local/rules.md` is not part of this: it stays "
             "English, the template keeps it current.",
             "Einmal übersetzen, Datei für Datei (`R-work-language`): nur Überschriften, Tabellenköpfe "
             "und Statuswörter im Fließtext sowie Hinweistexte. Unverändert lassen: Marken "
@@ -1489,7 +1523,7 @@ def translate_note_parts(
             "was ein Mensch geschrieben hat. Gängige englische Fachbegriffe (Skill, Worker, Override, "
             "Inbox, Backlog, Board, Hook, Commit, Branch …) bleiben stehen, vor allem in Überschriften; "
             "eine kurze Erklärung höchstens einmal im Text darunter. Danach die `act:default`-Zeile "
-            "(Zeile 1) aus der Datei entfernen. `docs/ai/rules.md` gehört nicht dazu: sie bleibt "
+            "(Zeile 1) aus der Datei entfernen. `docs/ai/local/rules.md` gehört nicht dazu: sie bleibt "
             "Englisch, die Vorlage hält sie aktuell.",
         ),
     ]
@@ -2075,6 +2109,8 @@ PREVIOUS_BLOCK_LINES: tuple[str, ...] = (
     "/CLAUDE.md merge=ours",
     "/AGENTS.md merge=ours",
     "/docs/ai/rules.md merge=ours",
+    "/docs/ai/rules.md merge=ours text eol=lf",
+    "/docs/ai/local/rules.md merge=ours",
 )
 
 

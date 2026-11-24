@@ -5,7 +5,7 @@
 #          checkboxes, replacements and additions are applied. One script, one parser, for both
 #          rule areas: coding rules (template source .act/coding/<set>.md, project file
 #          docs/project/coding_rules.md, IDs "CR-...") and core rules (template source
-#          .act/rules/**/*.md, project file docs/ai/rules.md, IDs "R-..."). Both areas use the
+#          .act/rules/**/*.md, project file docs/ai/local/rules.md, IDs "R-..."). Both areas use the
 #          same schema, described below.
 #
 #          The parser reads only the language-neutral marks a project file can contain — a
@@ -14,11 +14,11 @@
 #
 # Usage:
 #   python .act/scripts/rules.py                        # effective rule text for an AI, area=coding
-#   python .act/scripts/rules.py --area core             # same, for docs/ai/rules.md
+#   python .act/scripts/rules.py --area core             # same, for docs/ai/local/rules.md
 #   python .act/scripts/rules.py --list                  # human overview, one line per set/group
 #   python .act/scripts/rules.py CR-nuxt-basics           # one group in full, with its origin
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
-#   python .act/scripts/rules.py --add-missing           # enter rules/rule files of the template that docs/ai/rules.md lacks
+#   python .act/scripts/rules.py --add-missing           # enter rules/rule files of the template that docs/ai/local/rules.md lacks
 #   python .act/scripts/rules.py --add-new-coding        # enter coding sets/groups of .act/coding/ that coding_rules.md lacks
 #   python .act/scripts/rules.py --sync-methods         # write the `methods` row of config.md into coding_rules.md
 #   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
@@ -56,12 +56,12 @@
 #     (.claude/agents/<type>.md, else ~/.claude/agents/<type>.md) says `omitClaudeMd: true`; any other agent loads
 #     CLAUDE.md itself. Claude Code moves a hook string over 10,000 characters into a file, hence the parts (at file
 #     boundaries, a long file at `## ` headings); parts beyond the twelfth are not delivered, entry 12 names their
-#     source files in one line instead (this script and doctor.py warn). The rest of docs/ai/rules.md stays as it is,
+#     source files in one line instead (this script and doctor.py warn). The rest of docs/ai/local/rules.md stays as it is,
 #     and a rule the project switched off (unchecked, or its import removed) stays off for the worker too.
 #     Limits: Claude Code before 2.1.271 ignores `omitClaudeMd`, so the worker gets the rules twice (costs
 #     tokens only); without Python 3.9+ the hook prints
 #     nothing and the mechanical checks are inactive too; on any exception the first entry prints one fixed sentence
-#     telling the worker to read CLAUDE.md, docs/ai/rules.md and the shared rule files itself, and the hook never
+#     telling the worker to read CLAUDE.md, docs/ai/local/rules.md and the shared rule files itself, and the hook never
 #     exits non-zero; CLAUDE.md files in parent folders and .claude/rules/ are not assembled. Off: remove
 #     `omitClaudeMd: true` from a role file or set it to false (update.py adds the line only where none exists).
 #   Errors (unknown area, missing project file, unknown id, bad arguments): one line on stderr,
@@ -94,7 +94,7 @@ class Area:
 
 AREAS = {
     "coding": Area("coding", "docs/project/coding_rules.md"),
-    "core": Area("core", "docs/ai/rules.md"),
+    "core": Area("core", actlib.RULES_FILE),
 }
 
 
@@ -179,9 +179,9 @@ RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:(?:—|–|--)\s*(?P<reason>.+)
 RE_REPLACES = re.compile(r"^(?:-\s*|[*+]\s+)replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
 RE_REPLACES_LOOSE = re.compile(r"^(?:-\s*|[*+]\s+)replaces\b.*$")
 # A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is
-# written relative to docs/ai/ ("@../../.act/..."), the older "@.act/..." still parses.
+# written relative to docs/ai/local/ ("@../../../.act/..."), the older "@.act/..." still parses.
 RE_CORE_SET = re.compile(r"^(?:@(?:\.\./)*|`)?(?P<path>\.act/\S+?\.md)`?$")
-# The two blocks of docs/ai/rules.md that hold what active packages bring (package_load.py writes them): the "@"
+# The two blocks of docs/ai/local/rules.md that hold what active packages bring (package_load.py writes them): the "@"
 # lines of each package's rule files, coding sets and topics, before the template's rule imports (pre) and
 # before the overrides (post). Nothing inside a block is a set line, an override or an own rule.
 RE_PACKAGES_START = re.compile(r"^<!--\s*act:packages-(?P<side>pre|post)\s*-->\s*$", re.IGNORECASE)
@@ -225,7 +225,7 @@ LOCAL_PREFIX = "docs/ai/local/"
 
 
 def normalize_set_path(raw: str) -> str:
-    """A set path as written in a project file, in any of its forms — "@../../.act/coding/x.md"
+    """A set path as written in a project file, in any of its forms — "@../../../.act/coding/x.md"
     (an import, relative to the project file), the older "@.act/coding/x.md", "`...`" or a
     bare ".act/coding/x.md" — as the root-relative ".act/coding/x.md" every other function here
     expects."""
@@ -239,8 +239,8 @@ def normalize_set_path(raw: str) -> str:
 
 def import_path(set_path: str, project_file: str, root: Optional[Path] = None) -> str:
     """Root-relative `set_path` as an "@" import written from `project_file` (root-relative):
-    Claude Code resolves imports relative to the importing file, so docs/ai/rules.md imports
-    ".act/rules/shared/00-core.md" as "@../../.act/rules/shared/00-core.md". With `root`, the
+    Claude Code resolves imports relative to the importing file, so docs/ai/local/rules.md imports
+    ".act/rules/shared/00-core.md" as "@../../../.act/rules/shared/00-core.md". With `root`, the
     import names the file that backs the set (loaded_set_path), so a local override or a set of
     the project's own is the one Claude Code loads."""
     path = loaded_set_path(set_path, root) if root is not None else normalize_set_path(set_path)
@@ -274,7 +274,7 @@ def loaded_set_path(set_path: str, root: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parsing the project file (docs/project/coding_rules.md or docs/ai/rules.md)
+# Parsing the project file (docs/project/coding_rules.md or docs/ai/local/rules.md)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -928,7 +928,7 @@ def add_new_coding_entries(root: Path, write: bool = True, act_dir: Optional[Pat
 # the grammar of the coding sets, switched on by one config row. The row is turned into a section of
 # docs/project/coding_rules.md between the marks below, one checked "use:" set line with its groups per
 # name, so the orchestrator and every worker load them the way they load a coding set (the file is
-# imported from docs/ai/rules.md). The row decides: a set line in the block that the row does not name is
+# imported from docs/ai/local/rules.md). The row decides: a set line in the block that the row does not name is
 # removed, a named method gets its block; a group the project unchecked or gave a reason stays that way.
 # ---------------------------------------------------------------------------
 
@@ -1244,7 +1244,7 @@ REPORT_ONLY_MARKERS = ("the rule does not load", "has no effect")
 
 
 def move_core_entries(root: Path, write: bool = True) -> list[str]:
-    """Follow a rule that the template moved from one rule file to another in docs/ai/rules.md. The
+    """Follow a rule that the template moved from one rule file to another in docs/ai/local/rules.md. The
     file lists each rule as a checkbox line under the import of the file that holds it; after a
     move the line still sits under the old file, which the per-file checks (--list, --effective,
     --validate) read as "not a group of ..." and as the rule switched on again. For every line
@@ -1360,7 +1360,7 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Entering what the template has and an edited docs/ai/rules.md does not know — a rule as a checkbox
+# Entering what the template has and an edited docs/ai/local/rules.md does not know — a rule as a checkbox
 # line under its file's import, a rule file as an import block at the end of its section. The lock's
 # `rules_offered` remembers what was offered, so a line or an import the owner took out stays out.
 # ---------------------------------------------------------------------------
@@ -1371,7 +1371,7 @@ ADD_NEW_CODING_COMMAND = "python .act/scripts/rules.py --add-new-coding"
 
 
 def core_rule_files(root: Path, act_dir: Optional[Path] = None) -> dict[str, TemplateSet]:
-    """The template's rule files docs/ai/rules.md can import, by root-relative path: every *.md directly
+    """The template's rule files docs/ai/local/rules.md can import, by root-relative path: every *.md directly
     under .act/rules/shared/ and .act/rules/orchestrator/ (topics/ holds detail pages, not rules).
     With `act_dir` they are read from that .act/ (a fetched one, to preview an update), keyed as if
     it were installed."""
@@ -1389,7 +1389,7 @@ def core_rule_files(root: Path, act_dir: Optional[Path] = None) -> dict[str, Tem
 
 
 def _core_key(path: str) -> str:
-    """A set path of docs/ai/rules.md as the key shared with the template file: ".act/rules/x.md" and
+    """A set path of docs/ai/local/rules.md as the key shared with the template file: ".act/rules/x.md" and
     its local override "docs/ai/local/rules/x.md" both give "rules/x.md"."""
     return strip_template_prefix(normalize_set_path(path))
 
@@ -1433,7 +1433,7 @@ def _block_end(lines: list[str], index: int) -> int:
 def add_missing_core_entries(
     root: Path, write: bool = True, no_record: str = "name", act_dir: Optional[Path] = None,
 ) -> CoreAdd:
-    """Enter into an edited docs/ai/rules.md every rule and every rule file of the template that the
+    """Enter into an edited docs/ai/local/rules.md every rule and every rule file of the template that the
     file does not know. A rule of an imported file gets `  - [x] `ID`` after the nearest listed rule
     that precedes it in the template file (else right below the import); a rule file gets its import
     line and a checkbox line per rule, after the last import of the same layer (shared or
@@ -1561,8 +1561,8 @@ def add_missing_core_entries(
 
 
 # ---------------------------------------------------------------------------
-# The scope (docs/ai/config.md § Scope, act_profile.py) in docs/ai/rules.md — the import line of a rule
-# file the project excluded goes from "@../../.act/rules/<layer>/<file>.md" to the bare path (the form
+# The scope (docs/ai/config.md § Scope, act_profile.py) in docs/ai/local/rules.md — the import line of a rule
+# file the project excluded goes from "@../../../.act/rules/<layer>/<file>.md" to the bare path (the form
 # Claude Code never loads, like an unchecked coding set); the lock's `rules_cut` remembers which lines
 # the scope switched off, so only those come back when the exclusion ends. Boxes, overrides and
 # every other line stay as they are.
@@ -1576,8 +1576,8 @@ class CoreCut:
 
 
 def _core_import_lines(lines: list[str]) -> list[tuple[int, str, bool]]:
-    """(line index, root-relative rule file, imported) for every top-level line of docs/ai/rules.md that
-    names a file under .act/rules/ — as an import ("@../../.act/rules/...") or as the bare path. Fenced
+    """(line index, root-relative rule file, imported) for every top-level line of docs/ai/local/rules.md that
+    names a file under .act/rules/ — as an import ("@../../../.act/rules/...") or as the bare path. Fenced
     code, HTML comments and indented lines (a rule's checkbox list) are skipped."""
     found: list[tuple[int, str, bool]] = []
     fence: Optional[str] = None
@@ -1610,7 +1610,7 @@ def _core_import_lines(lines: list[str]) -> list[tuple[int, str, bool]]:
 
 
 def apply_core_cut(text: str, cut_files) -> tuple[str, list[str]]:
-    """Pure: `text` of a docs/ai/rules.md with the import line of every rule file in `cut_files`
+    """Pure: `text` of a docs/ai/local/rules.md with the import line of every rule file in `cut_files`
     (root-relative paths, act_profile.Cut.rules) made the bare path. Returns (new text, the rule files
     switched off by it); everything else, line endings included, stays byte for byte. Used where the
     file is derived from the template's bridge (the session start's refresh, update.py through it), so
@@ -1625,7 +1625,7 @@ def apply_core_cut(text: str, cut_files) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# What active packages bring into docs/ai/rules.md (package_load.py decides what, this is the text side):
+# What active packages bring into docs/ai/local/rules.md (package_load.py decides what, this is the text side):
 # two marked blocks of "@" lines and a mark on each rule line a package disables. Pure functions on text.
 # ---------------------------------------------------------------------------
 
@@ -1643,7 +1643,7 @@ class PackageImports:
     files: list[str]
 
 
-def package_import_line(rel: str, project_file: str = "docs/ai/rules.md") -> str:
+def package_import_line(rel: str, project_file: str = AREAS["core"].project_file) -> str:
     """The "@" line for the root-relative file `rel`, written like the lines for the template's own files."""
     return "@" + "../" * project_file.count("/") + rel
 
@@ -1680,7 +1680,7 @@ def _top_level_lines(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def package_block_spans(lines: list[str]) -> "tuple[dict[int, int], list[tuple[int, str]]]":
-    """The packages-pre and packages-post blocks of the `lines` of docs/ai/rules.md: ({index of the start mark:
+    """The packages-pre and packages-post blocks of the `lines` of docs/ai/local/rules.md: ({index of the start mark:
     index of the end mark}, [(index, text) of every stray mark]). A block ends only at the end mark of its own
     side; a start mark that finds no end mark of its side before the next start mark (or the end of the file) is
     no block, and an end mark with no open start mark of its side is none either: those marks are stray, and
@@ -1707,7 +1707,7 @@ def package_block_spans(lines: list[str]) -> "tuple[dict[int, int], list[tuple[i
 
 
 def stray_package_marks(text: str) -> list[tuple[int, str]]:
-    """(line number from 1, text) of every packages-pre/-post mark of docs/ai/rules.md `text` that is part of no
+    """(line number from 1, text) of every packages-pre/-post mark of docs/ai/local/rules.md `text` that is part of no
     block (see package_block_spans): the owner deleted the other mark of its pair, or it stands on its own."""
     return [(index + 1, mark) for index, mark in package_block_spans(text.split("\n"))[1]]
 
@@ -1754,7 +1754,7 @@ def _post_block_index(lines: list[str]) -> int:
 
 
 def apply_package_blocks(text: str, pre: "list[PackageImports]", post: "list[PackageImports]") -> str:
-    """`text` of docs/ai/rules.md with the packages-pre block directly before the first `.act/` rule import
+    """`text` of docs/ai/local/rules.md with the packages-pre block directly before the first `.act/` rule import
     line and the packages-post block directly before the overrides (see _post_block_index), each one `@` line
     per file, a line `<!-- package <id> <version> -->` before each package; no package on a side, no block
     there. Any block already in the text is replaced; with nothing on either side the text comes back as it was
@@ -1782,7 +1782,7 @@ def apply_package_blocks(text: str, pre: "list[PackageImports]", post: "list[Pac
 
 
 def apply_package_marks(text: str, disabled: "dict[str, str]", active: "set[str]") -> str:
-    """`text` of docs/ai/rules.md with the rules `disabled` (rule id -> the package that disables it) switched
+    """`text` of docs/ai/local/rules.md with the rules `disabled` (rule id -> the package that disables it) switched
     off and marked `<!-- act:package <id> -->`: only a checked rule is switched off; a rule already off, or one the
     owner switched back on by hand (checked, mark kept), is left. A rule marked for a package that is no longer in
     `active` is switched back on and loses its mark (the line is what it was before, byte for byte) -- unless
@@ -1834,7 +1834,7 @@ def apply_package_marks(text: str, disabled: "dict[str, str]", active: "set[str]
 
 
 def sync_core_cut(root: Path, write: bool = True) -> CoreCut:
-    """Bring the import lines of docs/ai/rules.md in line with the scope: a rule file the config
+    """Bring the import lines of docs/ai/local/rules.md in line with the scope: a rule file the config
     excludes (act_profile.read_cut) loses its "@" (shared/10-safety.md never does), and a line this
     function switched off earlier (the lock's `rules_cut`) whose file is no longer excluded gets its
     import back. A bare line the project wrote itself is never touched, and a file that is not
@@ -1843,7 +1843,7 @@ def sync_core_cut(root: Path, write: bool = True) -> CoreCut:
     second run finds nothing. A project without an .act-lock.json is left alone, and so is one whose
     lock cannot be read (`problem` says so): a line switched off without its record would never come
     back, so the record is written first and a failed record write changes nothing in the file. A file
-    docs/ai/rules.md that still equals what the session start generated stays "generated" (the
+    docs/ai/local/rules.md that still equals what the session start generated stays "generated" (the
     recorded hash follows), so a later template update still re-derives it, and the cut is applied
     again."""
     result = CoreCut()
@@ -1877,13 +1877,13 @@ def sync_core_cut(root: Path, write: bool = True) -> CoreCut:
     lock_readable = actlib.read_lock_at(root) is not None
     if add_record and not lock_readable:
         return CoreCut(problem=".act-lock.json is not readable, so the scope cannot be recorded; "
-                               "docs/ai/rules.md left as it is")
+                               "docs/ai/local/rules.md left as it is")
     if not write:
         return result
     # Order matters: a line switched off needs its record first (a crash in between leaves an import
     # whose record is harmless); a record is dropped only after its line is an import again.
     if add_record - recorded and not actlib.write_rules_cut(root, sorted(recorded | add_record)):
-        return CoreCut(problem="the scope could not be recorded in .act-lock.json; docs/ai/rules.md left as it is")
+        return CoreCut(problem="the scope could not be recorded in .act-lock.json; docs/ai/local/rules.md left as it is")
     if fixed != lines:
         rules_md = area.project_file
         was_generated = False
@@ -1907,7 +1907,7 @@ def sync_core_cut(root: Path, write: bool = True) -> CoreCut:
 
 
 def record_offered(root: Path, everything: bool = False, start: bool = False) -> bool:
-    """Record in the lock which rule files and rules docs/ai/rules.md has now, as offered. With
+    """Record in the lock which rule files and rules docs/ai/local/rules.md has now, as offered. With
     `everything`, the whole template tree counts (init: it just materialized all of it). Never removes
     an entry. Without a record in the lock, none is started unless `everything` or `start` says so
     (init: the file is new to the lock, what it lists is what it has been offered). Returns whether
@@ -1984,6 +1984,45 @@ def _import_targets(text: str) -> list[tuple[int, str]]:
             if target:
                 found.append((number, target))
     return found
+
+
+def rewrite_import_targets(
+    text: str, rewrite: Callable[[str], Optional[str]],
+) -> tuple[str, list[tuple[int, str]]]:
+    """`text` with the target of every import that `_import_targets` finds replaced by what `rewrite(target)`
+    returns; everything else stays byte for byte, line endings included. `rewrite` returns the new target, the
+    same one to leave it as it is, or None to leave it and have it reported. Returns (new text, [(line number,
+    target)] of the imports `rewrite` declined). An "@target" inside a code span or an HTML comment of its
+    line is never touched."""
+    found = _import_targets(text)
+    if not found:
+        return text, []
+    lines = text.splitlines(keepends=True)
+    declined: list[tuple[int, str]] = []
+    for number, target in found:
+        new = rewrite(target)
+        if new is None:
+            declined.append((number, target))
+        elif new != target:
+            lines[number - 1] = _replace_import(lines[number - 1], target, new)
+    return "".join(lines), declined
+
+
+def _replace_import(line: str, target: str, new: str) -> str:
+    """`line` with "@<target>" written as "@<new>" where Claude Code reads it as an import (not inside a code span
+    or an HTML comment of that line)."""
+    masked = [match.span() for pattern in (RE_CODE_SPAN, RE_HTML_COMMENT) for match in pattern.finditer(line)]
+    pattern = re.compile(r"(?:^|(?<=[\s*_(\[]))@" + re.escape(target) + r"(?![^\s*_)\]#.,;:!?])")
+    pieces: list[str] = []
+    last = 0
+    for match in pattern.finditer(line):
+        if any(start <= match.start() < end for start, end in masked):
+            continue
+        pieces.append(line[last:match.start()])
+        pieces.append("@" + new)
+        last = match.end()
+    pieces.append(line[last:])
+    return "".join(pieces)
 
 
 def _looks_like_path(target: str) -> bool:
@@ -2256,7 +2295,7 @@ WORKER_PARTS = actlib.WORKER_RULES_PARTS   # fixed number of SubagentStart entri
 ORCHESTRATOR_DIRS = (".act/rules/orchestrator/", "docs/ai/local/rules/orchestrator/")
 _PART_RESERVE = 700        # room kept free for a part's header line
 WORKER_RULES_FALLBACK = (
-    "Worker rules could not be assembled: read CLAUDE.md, docs/ai/rules.md and the files it imports "
+    "Worker rules could not be assembled: read CLAUDE.md, docs/ai/local/rules.md and the files it imports "
     "from .act/rules/shared/ before your first step; skip .act/rules/orchestrator/."
 )
 
@@ -2541,7 +2580,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--list", action="store_true", help="human overview, one line per set/group")
     mode.add_argument("--validate", action="store_true", help="schema + cross-checks, exit 1 on findings")
     mode.add_argument("--add-missing", action="store_true",
-                      help="enter the rules and rule files of the template that docs/ai/rules.md does not "
+                      help="enter the rules and rule files of the template that docs/ai/local/rules.md does not "
                            "know (--area core is implied); exit 1 if something could not be entered")
     mode.add_argument("--add-new-coding", action="store_true",
                       help="list in docs/project/coding_rules.md the rule sets and groups of .act/coding/ it does "

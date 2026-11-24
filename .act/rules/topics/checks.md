@@ -53,7 +53,7 @@ calls for is removed with a backup; a file `docs/ai/local/agents/<role>.md` with
 it is the place of an own role) or the assignment header that tells the worker beforehand what the check does not allow, with the options adopt,
 reword, do nothing. The sentence follows the most frequent class of the window where one is listed below as
 `<check> (<class>)`, else it is the check's own; a check without one gets a generic sentence. When a file the worker
-reads already carries that sentence (the role's bridge, `docs/ai/rules.md`, `docs/project/coding_rules.md` or a rule file
+reads already carries that sentence (the role's bridge, `docs/ai/local/rules.md`, `docs/project/coding_rules.md` or a rule file
 the workers load; compared without backticks, emphasis and line breaks), the options become report to the template,
 adopt anyway, reword, do nothing, the question names those files, and only the blocks after the last commit of the
 carrying file (without a commit, its modification date) count, from the day after it.

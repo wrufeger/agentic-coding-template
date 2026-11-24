@@ -158,7 +158,7 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
   reads the archived copy as its own configuration) — then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
-  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
+  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/local/rules.md,
   docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
@@ -1122,8 +1122,8 @@ options:
   --area {coding,core}  which rule area to read (default: coding)
   --list                human overview, one line per set/group
   --validate            schema + cross-checks, exit 1 on findings
-  --add-missing         enter the rules and rule files of the template that docs/ai/rules.md does
-                        not know (--area core is implied); exit 1 if something could not be
+  --add-missing         enter the rules and rule files of the template that docs/ai/local/rules.md
+                        does not know (--area core is implied); exit 1 if something could not be
                         entered
   --add-new-coding      list in docs/project/coding_rules.md the rule sets and groups of
                         .act/coding/ it does not know yet (--area coding is implied)
