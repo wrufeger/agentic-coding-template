@@ -52,6 +52,14 @@ python .act/scripts/rules.py CR-python-basics
 python .act/scripts/rules.py --validate     # check the project's rule files
 ```
 
+## Packages
+
+A package bundles rules, skills, roles and checks that not every project needs. A project adds one from
+[act-packages](https://github.com/wrufeger/act-packages) with `/act-packages`, which shows the plan and the diff first
+and installs only after your yes. Which packages exist and what each contains:
+[package overview](https://wrufeger.github.io/agentic-coding-template-docs/packages/); how to use, create and submit
+one: [packages guide](https://wrufeger.github.io/agentic-coding-template-docs/guides/packages/).
+
 ## License
 
 MIT — see `LICENSE`.
