@@ -110,6 +110,10 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   it starts writes only where the worker may write itself.
 
 ### Fixed
+- A project made before packages existed gets the `## Packages` section in `docs/ai/config.md` from `act-update`, so
+  `packages.py settings <id> <key>=<value>` works there instead of refusing with "no section".
+- When `cd-git` refuses a call, the message now says that nothing of it ran, the steps around `git` included, and to run
+  those in a call of their own; `warn` keeps its text.
 - The session start says `no rule file loaded` when `CLAUDE.md` leads to no rule file; before, it showed `rules: 0` or
   a count and nothing else.
 - GitHub Copilot on Windows refused every tool call in a project with Claude Code hooks ("hook errored"); the hooks

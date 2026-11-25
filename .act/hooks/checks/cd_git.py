@@ -36,10 +36,17 @@ __all__ = ["check_cd_git"]
 _CD_WORDS = ("cd", "pushd")
 _MSYS_DRIVE_RE = re.compile(r"^/([A-Za-z])(/.*)?$")
 
+# The warn text: the call runs. The block text says that nothing of it ran, the steps around git included.
 _MESSAGE = (
     "[act] cd and git in one call: Claude Code asks the owner for approval each time for it (cd-git-compound), "
     "auto mode included. Run git in a call of its own with the folder written out: `git -C {folder} <command>`; "
     "a `cd` is not needed. Switch `cd-git` in docs/ai/config.md § Checks"
+)
+_BLOCK_MESSAGE = (
+    "[act] cd and git in one call: nothing of this call ran, not the steps before or after git either. "
+    "Claude Code asks the owner for approval each time for such a call (cd-git-compound), auto mode included. "
+    "Run the other steps in a call of their own, then git in a call of its own with the folder written out: "
+    "`git -C {folder} <command>`; a `cd` is not needed. Switch `cd-git` in docs/ai/config.md § Checks"
 )
 
 
@@ -112,9 +119,8 @@ def check_cd_git(payload: dict) -> int:
     shown = folder if folder and not any(char in folder for char in "$`~") else "<folder>"
     if " " in shown:
         shown = f'"{shown}"'
-    message = _MESSAGE.format(folder=shown)
     if mode == "warn":
-        print(message)
+        print(_MESSAGE.format(folder=shown))
         return 0
-    print(message, file=sys.stderr)
+    print(_BLOCK_MESSAGE.format(folder=shown), file=sys.stderr)
     return 2
