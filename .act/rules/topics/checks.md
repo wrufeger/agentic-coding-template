@@ -68,7 +68,7 @@ The sentences are these:
 - `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, Copilot roles under `.github/agents/`, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
-- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`): never stage, commit, stash, reset or check out, and never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`.
+- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`, `notes list`, `remote -v`, `reflog`, `worktree list`, `apply --check`): never stage, commit, stash, reset or check out, never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`, and never run a maintenance, plumbing or notes/remote/worktree/reflog command that writes (`gc`, `prune`, `notes add`, `remote add`, `worktree add`, `hash-object -w` …).
 - `nesting_guard`: Never start another worker; name a better split in your result.
 - `mcp_ide`: Do not use IDE tools that write, run a shell or run a program; use the standard tools inside your `Write scope:`.
 - `commit_pathspec`: Never stage with `git add -A`, `git add .` or `git commit -a`; name each path.
@@ -383,6 +383,26 @@ or a key with a value). Reading stays free: `symbolic-ref <name>`, `tag`, `tag -
 `--list`, `config get`. Git run against a folder outside the project (`git -C <folder>`, a leading `cd <folder>`) is
 exempt, but a `config` write with `--global`, `--system` or `--file` is refused there too: it writes the user's, the
 machine's or a named file, not that repository.
+
+It also refuses the typed writing forms of further commands. Refused in every form, because they have no reading form:
+`gc`, `repack`, `pack-refs`, `maintenance`, `filter-branch`, `fast-import`, `update-index`, `read-tree`, `write-tree`,
+`commit-tree`, `mktag`, `mktree`, `checkout-index`. Refused except for the reading forms named here (any other form is
+a write): `notes` (free: bare, `list`, `show`, `get-ref`), `replace` (bare, `-l`/`--list`, `--format`), `worktree`
+(`list`), `remote` (bare, `-v`, `show`, `get-url`, and `prune` with `-n`/`--dry-run`), `reflog` (every form except
+`expire`, `delete`, `drop` and `write`; `expire` and `delete` are free as a dry run), `prune` (only as a dry run),
+`hash-object` (only without `-w`; in a bundle `-wt` sets it, `-tw` is the type `w`), `history` (bare, `-h`, or a form
+with `--dry-run`; it has no `-n`), `sparse-checkout` (`list`),
+`bisect` (bare, `log`, `visualize`/`view`, `terms`, `help`), `rerere` (`status`, `diff`, `remaining`). `apply` is
+free when it only analyses a patch: one of `--check`, `--stat`, `--numstat` or `--summary`, and every other word is
+`-v`/`--verbose`, `-q`/`--quiet`, `-z`, `-R`/`--reverse`, `--recount`, `--allow-empty`, `--unidiff-zero`, `-p<n>`,
+`-C<n>`, `--include=`, `--exclude=`, `--directory=`, `-` or a patch file; `--apply`, `--index`, `--cached`, `--3way`,
+`--reject`, any `--no-…` word or an abbreviation keeps it refused. A dry run is a word exactly `-n` or `--dry-run`
+before any `--` or `--end-of-options`, with no word that starts with `--no-` (git reads `--no-dry-run` as the write);
+an abbreviation such as `--dry` is refused, and so is a `-n` that is the value of `--expire`. Options before the
+subcommand (`git notes --ref=x add`, `git -C <folder> …`) are skipped when the subcommand is found. `fetch`, `clone`,
+`submodule`, `lfs` and `backfill` are not checked. The check reads the words typed: an alias
+from the repository's or the user's git configuration (`alias.zz = commit`, then `git zz`) is invisible to it, as is a
+variable that expands to an option; only a `-c alias.<name>=…` on the call itself is refused.
 
 `worker-run-watch` (`warn` default, `off` skips it, `block` counts as `warn`; it never refuses and never resets)
 reports what a worker's script or program changed, because the other checks read the text of a call and cannot see what

@@ -9,7 +9,11 @@
 #          name (_symbolic_ref_reads_only), `tag` unless it only lists or verifies (_tag_lists_only) and `config`
 #          when it writes (_config_writes; a write with `--global`, `--system` or `--file` is never exempt, see
 #          _config_escapes_repo); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
-#          `blame` are never in the write set. Split from checks/git_discard.py: this one asks WHO runs a
+#          `blame` are never in the write set. Commands with a reading form beside a writing one are decided by
+#          the helpers behind _READ_FORMS (`notes`, `replace`, `worktree`, `remote`, `reflog`, `prune`,
+#          `hash-object`, `history`, `sparse-checkout`, `bisect`, `rerere`, `apply`): the reading forms are named, every
+#          other form is a write. The deny-list stays: a subcommand this check does not know is free.
+#          Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
 #          Command decomposition (finding every `git ...` invocation despite quoting, heredocs,
@@ -55,6 +59,9 @@
 #     checked normally.
 #   - a write made from inside a program (`python -c "...git..."`, a script file) is invisible,
 #     same limit as shell_targets.py's own docstring states.
+#   - an alias from the repository's or the user's git configuration is invisible: the check reads the words
+#     typed, so `git zz` with `alias.zz = commit` in a config file passes (only a `-c alias.<name>=` typed on the
+#     call itself is caught). A word is read as typed: a variable that expands to an option is not seen.
 
 from __future__ import annotations
 
@@ -87,9 +94,14 @@ __all__ = [
 # ("cd <tmp> && git init") only exercises that exemption if `init` is itself a write here — inside
 # the project it would otherwise reinitialize repository metadata, which is exactly the kind of
 # change this check exists to keep a worker from doing unsupervised.
+#
+# The second row has no reading form at all (maintenance and history rewriting, plumbing that writes
+# objects, the index or the working tree); `apply` is not here, it is read through _apply_reads_only.
 _GIT_WRITE_SUBCOMMANDS = frozenset({
     "commit", "add", "stash", "checkout", "switch", "reset", "restore", "merge", "rebase",
-    "clean", "push", "pull", "cherry-pick", "revert", "am", "apply", "rm", "mv", "init",
+    "clean", "push", "pull", "cherry-pick", "revert", "am", "rm", "mv", "init",
+    "gc", "repack", "pack-refs", "maintenance", "filter-branch", "fast-import", "update-index", "read-tree",
+    "write-tree", "commit-tree", "mktag", "mktree", "checkout-index",
 })
 
 _BRANCH_SHORT_RE = re.compile(r"-[alrvi]+")
@@ -300,11 +312,219 @@ def _config_escapes_repo(sub_args: list[str]) -> bool:
     return _config_scan(sub_args)[3] and _config_writes(sub_args)
 
 
+def _subcommand_after_options(args: list[str], value_flags: tuple[str, ...] = ()) -> tuple[Optional[str], list[str]]:
+    """The first word that is no option, and the words after it (None and [] when every word is an option). A word
+    that starts with `-` is skipped; a long one that is a prefix of one of `value_flags` (git takes an unambiguous
+    abbreviation) and has no `=` takes the next word as its value, which is skipped with it."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if not arg.startswith("-"):
+            return arg, args[index:]
+        if "=" not in arg and len(arg) > 2 and any(flag.startswith(arg) for flag in value_flags):
+            index += 1
+    return None, []
+
+
+_END_OF_OPTIONS = ("--", "--end-of-options")  # git reads every word after either as no option
+_DRY_RUN_FLAGS = frozenset({"-n", "--dry-run"})
+_DRY_RUN_VALUE_FLAG = "--expire-unreachable"  # `--expire <time>` and `--expire-unreachable <time>` take the next word
+
+
+def _is_dry_run(args: list[str]) -> bool:
+    """True when a word is exactly `-n` or `--dry-run` (and is no option's value) and no word starts with `--no-`
+    (parse-options makes `--no-dry-run` from it). An abbreviation such as `--dry` or a bundle such as `-nv` is read
+    as the write it might be. The words after a `--` or `--end-of-options` are no options. `--expire`/
+    `--expire-unreachable` (also abbreviated) take the next word as their value, so `--expire -n` stays a write."""
+    if any(arg.startswith("--no-") for arg in args):
+        return False
+    dry, index = False, 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg in _END_OF_OPTIONS:
+            break
+        if arg in _DRY_RUN_FLAGS:
+            dry = True
+        elif "=" not in arg and arg.startswith("--") and len(arg) > 2 and _DRY_RUN_VALUE_FLAG.startswith(arg):
+            index += 1
+    return dry
+
+
+_NOTES_READ_SUBCOMMANDS = frozenset({"list", "show", "get-ref"})
+
+
+def _notes_reads_only(args: list[str]) -> bool:
+    """True for `git notes` bare or with `list`, `show` or `get-ref`; options before the subcommand are skipped
+    (`--ref` takes the next word as its value). Every other subcommand (`add`, `append`, `copy`, `edit`, `merge`,
+    `remove`, `prune`) and any other word writes."""
+    subcommand, _ = _subcommand_after_options(args, ("--ref",))
+    return subcommand is None or subcommand in _NOTES_READ_SUBCOMMANDS
+
+
+def _replace_lists_only(args: list[str]) -> bool:
+    """True for `git replace` bare or only listing: `-l`/`--list` and `--format` (with its value), bare words only
+    as patterns once listing is on. `-d`, `-e`, `-g`, `-f`, `--convert-graft-file`, an abbreviated long option, a bundle
+    and a bare word without listing make it a write. `--format` always takes the next word as its value, also one that
+    starts with `-` (`--format -l a b` has the format `-l` and replaces `a` with `b`)."""
+    listing, bare, index = False, 0, 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg in ("-l", "--list"):
+            listing = True
+        elif arg == "--format":
+            index += 1
+        elif arg.startswith("--format="):
+            continue
+        elif arg.startswith("-"):
+            return False
+        else:
+            bare += 1
+    return bare == 0 or listing
+
+
+def _worktree_reads_only(args: list[str]) -> bool:
+    """True for `git worktree list` only; `add`, `lock`, `move`, `prune`, `remove`, `repair`, `unlock` and a bare
+    `worktree` are writes here."""
+    return _subcommand_after_options(args)[0] == "list"
+
+
+def _sparse_checkout_reads_only(args: list[str]) -> bool:
+    """True for `git sparse-checkout list` only."""
+    return _subcommand_after_options(args)[0] == "list"
+
+
+def _remote_reads_only(args: list[str]) -> bool:
+    """True for `git remote` bare, with `-v`, `show` or `get-url`, and `remote prune` as a dry run (_is_dry_run).
+    `add`, `rename`, `remove`, `set-head`, `update`, `set-branches`, `set-url` and a `prune` that deletes write."""
+    subcommand, _ = _subcommand_after_options(args)
+    if subcommand is None or subcommand in ("show", "get-url"):
+        return True
+    return subcommand == "prune" and _is_dry_run(args)
+
+
+def _reflog_reads_only(args: list[str]) -> bool:
+    """True for every `reflog` form but `expire`, `delete`, `drop` and `write` as the first word that is no option;
+    `expire` and `delete` as a dry run (_is_dry_run) read. Bare, `show`, `list`, `exists` and a ref name read."""
+    subcommand, _ = _subcommand_after_options(args)
+    if subcommand in ("expire", "delete"):
+        return _is_dry_run(args)
+    return subcommand not in ("drop", "write")
+
+
+def _hash_object_reads_only(args: list[str]) -> bool:
+    """False when `-w` is set: a word `-w`, or a bundle of short options where `w` comes before `t` (`-wt blob`;
+    `-t` takes the rest of its word as the type, so `-tw` is the type `w`; a bundle that ends in `t` takes the next
+    word as the type, so `-t -- -w f` still sets `-w`). Words after `--` or `--end-of-options` are files."""
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg in _END_OF_OPTIONS:
+            break
+        if arg.startswith("-") and not arg.startswith("--"):
+            for position, char in enumerate(arg[1:], 1):
+                if char == "w":
+                    return False
+                if char == "t":
+                    index += position + 1 == len(arg)  # the type is the next word
+                    break
+    return True
+
+
+def _history_reads_only(args: list[str]) -> bool:
+    """True for a bare `git history` or `git history -h` (usage only), and for any form with a word exactly
+    `--dry-run` before the first `--`/`--end-of-options` and no word that starts with `--no-`. `drop`, `fixup`,
+    `reword` and `split` rewrite commits; `history` has no `-n`, so only the long word counts."""
+    if not args or args == ["-h"]:
+        return True
+    options = []
+    for arg in args:
+        if arg in _END_OF_OPTIONS:
+            break
+        options.append(arg)
+    return "--dry-run" in options and not any(arg.startswith("--no-") for arg in args)
+
+
+_BISECT_READ_SUBCOMMANDS = frozenset({"log", "visualize", "view", "terms", "help"})
+_RERERE_READ_SUBCOMMANDS = frozenset({"status", "diff", "remaining"})
+
+
+def _bisect_reads_only(args: list[str]) -> bool:
+    """True for `git bisect` bare, `log`, `visualize`/`view`, `terms` and `help`; `start`, `bad`, `good`, `skip`,
+    `next`, `reset`, `replay`, `run` and any other word write (move HEAD or the bisect state)."""
+    subcommand, _ = _subcommand_after_options(args)
+    return subcommand is None or subcommand in _BISECT_READ_SUBCOMMANDS
+
+
+def _rerere_reads_only(args: list[str]) -> bool:
+    """True for `git rerere status`, `diff` and `remaining`; bare `rerere` records resolutions, `clear`, `forget` and
+    `gc` delete them."""
+    return _subcommand_after_options(args)[0] in _RERERE_READ_SUBCOMMANDS
+
+
+_APPLY_ANALYSIS_FLAGS = frozenset({"--check", "--stat", "--numstat", "--summary"})
+_APPLY_PLAIN_FLAGS = frozenset({
+    "-v", "--verbose", "-q", "--quiet", "-z", "-R", "--reverse", "--recount", "--allow-empty", "--unidiff-zero", "-",
+})
+_APPLY_NUMBER_RE = re.compile(r"-[pC]\d+")
+_APPLY_VALUE_PREFIXES = ("--include=", "--exclude=", "--directory=")
+
+
+def _apply_reads_only(args: list[str]) -> bool:
+    """True for an `apply` that only analyses a patch: at least one of `--check`, `--stat`, `--numstat`, `--summary`,
+    and every other word is `-v`, `--verbose`, `-q`, `--quiet`, `-z`, `-R`, `--reverse`, `--recount`,
+    `--allow-empty`, `--unidiff-zero`, `-p<n>`, `-C<n>`, `--include=`, `--exclude=`, `--directory=`, `-` or a word that
+    is no option (a patch file). Any other word (`--apply`, `--index`, `--cached`, `--3way`, `--reject`, `--no-…`, an
+    abbreviation) makes it a write: an allow-list, per word."""
+    if not any(arg in _APPLY_ANALYSIS_FLAGS for arg in args):
+        return False
+    return all(
+        not arg.startswith("-") or arg in _APPLY_ANALYSIS_FLAGS or arg in _APPLY_PLAIN_FLAGS
+        or _APPLY_NUMBER_RE.fullmatch(arg) is not None or arg.startswith(_APPLY_VALUE_PREFIXES)
+        for arg in args
+    )
+
+
+# Commands with a reading form beside a writing one: each returns True for the forms that only read; every other
+# form is a write (an allow-list per command, the command itself is on the deny-list).
+_READ_FORMS = {
+    "apply": _apply_reads_only,
+    "notes": _notes_reads_only,
+    "replace": _replace_lists_only,
+    "worktree": _worktree_reads_only,
+    "remote": _remote_reads_only,
+    "reflog": _reflog_reads_only,
+    "prune": _is_dry_run,
+    "hash-object": _hash_object_reads_only,
+    "history": _history_reads_only,
+    "sparse-checkout": _sparse_checkout_reads_only,
+    "bisect": _bisect_reads_only,
+    "rerere": _rerere_reads_only,
+}
+
 _WRITE_FORM_TEXT = {
     "update-ref": "changes a ref",
     "symbolic-ref": "changes where a symbolic ref (HEAD) points",
     "tag": "creates, changes or deletes a tag; a worker may list tags with `git tag -l`",
     "config": "writes git configuration; a worker may read it with `git config <key>`, `--get` or `--list`",
+    "apply": "applies a patch; a worker may check one with `git apply --check`, `--stat`, `--numstat` or `--summary`",
+    "notes": "changes notes; a worker may read them with `git notes`, `git notes list`, `show` or `get-ref`",
+    "replace": "creates, changes or deletes a replace ref; a worker may list them with `git replace -l`",
+    "worktree": "changes worktrees; a worker may list them with `git worktree list`",
+    "remote": ("changes remotes; a worker may read them with `git remote`, `-v`, `show` or `get-url`, or run "
+               "`remote prune --dry-run`"),
+    "reflog": ("expires, deletes or writes reflog entries; a worker may read it with `git reflog`, `show`, `list`, "
+               "`exists` or a ref, or run `expire`/`delete` with `--dry-run`"),
+    "prune": "deletes unreachable objects; a worker may run `git prune --dry-run`",
+    "hash-object": "writes an object with -w; a worker may hash without `-w`",
+    "history": "rewrites commits; a worker may run `git history <subcommand> --dry-run`",
+    "sparse-checkout": "changes the sparse-checkout; a worker may read it with `git sparse-checkout list`",
+    "bisect": ("changes HEAD or the bisect state; a worker may read it with `git bisect log`, `visualize`, `terms` "
+               "or `help`"),
+    "rerere": "changes recorded resolutions; a worker may read them with `git rerere status`, `diff` or `remaining`",
 }
 
 
@@ -319,6 +539,8 @@ def _is_git_write_subcommand(subcommand: str, args: list[str]) -> bool:
         return not _tag_lists_only(args)
     if subcommand == "config":
         return _config_writes(args)
+    if subcommand in _READ_FORMS:
+        return not _READ_FORMS[subcommand](args)
     return subcommand in _GIT_WRITE_SUBCOMMANDS or (subcommand == "branch" and not _branch_lists_only(args))
 
 

@@ -36,6 +36,13 @@ false alarms and a truer `update.py --plan`.
 ### Fixed
 - `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
   (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
+- `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker; `apply`
+  with any other option is still refused.
+
+### Security
+- `worker-git-write` also refuses a worker's writing forms of `gc`, `prune`, `repack`, `notes`, `remote`, `reflog`,
+  `worktree`, `history`, `hash-object -w` and more; reading forms (`notes list`, `remote -v`, `prune --dry-run`) stay
+  free.
 
 ## [2.7.0] - 2026-11-25
 
