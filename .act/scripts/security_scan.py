@@ -85,7 +85,12 @@
 #     unusual layout) is not;
 #   - every tool call is a real subprocess with argument lists, never a shell string -- a tool that
 #     needs network access (osv-scanner's own database lookup, if not run with a local database)
-#     reaches it itself; this module never opens a connection of its own.
+#     reaches it itself; this module never opens a connection of its own;
+#   - an osv-scanner finding marked "likely range artifact" names a fix version that is not newer
+#     than the installed one (an advisory with an open range for an older release line); the
+#     ecosystem's own audit tool is run as a cross-check and the mark says whether it reports the
+#     package too or could not be asked -- the finding stays in the output and still holds a commit
+#     like any other high/critical one, so accept it in `security-accepted.md` once confirmed harmless.
 
 from __future__ import annotations
 
@@ -112,7 +117,7 @@ __all__ = [
     "lock_file_digest", "lock_set_digest", "scan_time_limit",
     "cache_dir", "result_cache_path", "running_marker_path", "is_state_hash",
     "write_running_marker", "read_running_marker", "clear_running_marker",
-    "write_result_cache", "read_result_cache", "result_from_dict",
+    "write_result_cache", "read_result_cache", "result_from_dict", "range_artifact_note",
     "accepted_list_path", "load_accepted", "is_accepted",
     "run_scan", "main",
 ]
@@ -280,10 +285,11 @@ _TOOL_TIMEOUT = 60.0  # npm audit / composer audit / pip-audit, one call per loc
 
 def scan_time_limit(lock_files: dict[str, list[Path]]) -> float:
     """Upper bound (seconds) on the tool time one `run_scan(root, lock_files)` can spend before
-    every subprocess in it has timed out on its own: the osv-scanner path (two invocation shapes)
-    or the per-ecosystem path (one call per lock file), whichever is longer."""
+    every subprocess in it has timed out on its own: the osv-scanner path (two invocation shapes,
+    then one cross-check call per lock file holding a range-artifact finding) or the per-ecosystem
+    path (one call per lock file). The sum covers the longer of the two."""
     count = sum(len(paths) for paths in lock_files.values())
-    return max(2 * _OSV_TIMEOUT, _TOOL_TIMEOUT * max(count, 1))
+    return 2 * _OSV_TIMEOUT + _TOOL_TIMEOUT * max(count, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +483,10 @@ class Finding:
     fixed_version: Optional[str]
     lock_file: str
     summary: str = ""
+    # osv-scanner finding whose fix version is not newer than the installed one, and what the
+    # ecosystem's own tool said about it: "reports:<tool>", "absent:<tool>" or "none:<reason>"
+    range_artifact: bool = False
+    cross_check: str = ""
 
 
 @dataclasses.dataclass
@@ -644,17 +654,82 @@ def _osv_severity(vuln: dict, groups: object) -> str:
     return group_severity or "unknown"
 
 
-def _osv_fixed_version(vuln: dict) -> Optional[str]:
-    for affected in vuln.get("affected", []) if isinstance(vuln.get("affected"), list) else ():
-        if not isinstance(affected, dict):
-            continue
-        for value_range in affected.get("ranges", []) if isinstance(affected.get("ranges"), list) else ():
+_RELEASE_NUMBER = re.compile(r"^v?\d+(\.\d+)*$")
+
+
+def _release_key(text: object) -> "Optional[tuple[int, ...]]":
+    """`text` as a tuple of ints when it is a plain release number (`1.2`, `v2.0.1`), else None
+    (pre-release, PEP 440 suffix, hash ...). Trailing zeros are dropped so `1.2` equals `1.2.0`."""
+    value = str(text).strip()
+    if not _RELEASE_NUMBER.match(value):
+        return None
+    numbers = [int(part) for part in value.lstrip("v").split(".")]
+    while len(numbers) > 1 and numbers[-1] == 0:
+        numbers.pop()
+    return tuple(numbers)
+
+
+def _normalize_package(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _osv_fixed_info(
+    vuln: dict, package: str = "", installed: str = "", ecosystem: str = "",
+) -> "tuple[Optional[str], bool]":
+    """(fix version to show, range-artifact mark) for one OSV record. Only the `affected` entries
+    naming `package` count (all of them when none names a package or none matches it). A fixed event newer than the
+    installed version wins (the smallest such one, no mark); the mark is set only when the
+    installed version and every fixed event are plain release numbers and none is newer."""
+    raw = vuln.get("affected")
+    entries = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+    def entry_name(entry: dict) -> str:
+        info = entry.get("package")
+        return str(info.get("name") or "") if isinstance(info, dict) else ""
+
+    if any(entry_name(entry) for entry in entries):
+        pypi = ecosystem.lower() == "pypi"
+        named = [
+            entry for entry in entries
+            if entry_name(entry) == package
+            or (pypi and entry_name(entry) and _normalize_package(entry_name(entry)) == _normalize_package(package))
+        ]
+        if named:  # none naming this package: every entry counts, as when no entry names one
+            entries = named
+    fixed: list[str] = []
+    for entry in entries:
+        for value_range in entry.get("ranges", []) if isinstance(entry.get("ranges"), list) else ():
             if not isinstance(value_range, dict):
                 continue
             for event in value_range.get("events", []) if isinstance(value_range.get("events"), list) else ():
                 if isinstance(event, dict) and event.get("fixed"):
-                    return str(event["fixed"])
-    return None
+                    fixed.append(str(event["fixed"]))
+    if not fixed:
+        return None, False
+    installed_key = _release_key(installed)
+    if installed_key is None:
+        return fixed[0], False
+    keys = [(_release_key(item), item) for item in fixed]
+    newer = [(key, item) for key, item in keys if key is not None and key > installed_key]
+    if newer:
+        return min(newer, key=lambda pair: pair[0])[1], False
+    if all(key is not None for key, _item in keys):
+        return max(keys, key=lambda pair: pair[0])[1], True
+    return fixed[0], False
+
+
+def range_artifact_note(finding: "Finding") -> str:
+    """The text (with its leading space) that marks a finding as a likely range artifact, or ""
+    for an unmarked finding -- one wording for `security_scan` and the commit check."""
+    if not finding.range_artifact:
+        return ""
+    head = f"fix {finding.fixed_version} is not newer than installed {finding.version}"
+    kind, _sep, detail = finding.cross_check.partition(":")
+    if kind == "reports":
+        return f" [{head}, but {detail} reports this package too]"
+    if kind == "absent":
+        return f" [likely range artifact: {head}; {detail} does not report it]"
+    return f" [likely range artifact: {head}; no cross-check: {detail or 'not run'}]"
 
 
 def _looks_like_cli_mismatch(stderr: Optional[str]) -> bool:
@@ -807,13 +882,15 @@ def _run_osv_scanner_chunk(
             for vuln in package_entry.get("vulnerabilities", []) if isinstance(package_entry.get("vulnerabilities"), list) else ():
                 if not isinstance(vuln, dict):
                     continue
+                fixed_version, artifact = _osv_fixed_info(vuln, name, version, ecosystem)
                 findings.append(Finding(
                     ecosystem=ecosystem, package=name, version=version,
                     advisory_id=str(vuln.get("id", "?")),
                     severity=_osv_severity(vuln, groups),
-                    fixed_version=_osv_fixed_version(vuln),
+                    fixed_version=fixed_version,
                     lock_file=lock_file,
                     summary=str(vuln.get("summary") or "")[:200],
+                    range_artifact=artifact,
                 ))
     if not findings:
         return [], _silent_findings_error(returncode, _FINDINGS_EXIT_1, "osv-scanner JSON holds no vulnerability")
@@ -1068,6 +1145,64 @@ def _record_error(result: ScanResult, text: str, error: str) -> None:
         result.unreadable_reports.append(text)
 
 
+def _cross_check_lock(
+    key: str, lock_path: Path, root: Path, tools: "dict[str, str]",
+) -> "tuple[Optional[set[str]], str, str]":
+    """(package names the ecosystem's own tool reports, tool name, reason). The names are None
+    when no cross-check was possible, with the reason."""
+    runners = {"npm": ("npm", _run_npm_audit), "pnpm": ("pnpm", _run_pnpm_audit),
+               "composer": ("composer", _run_composer_audit)}
+    if key == "python":
+        if lock_path.name not in PIP_AUDIT_LOCK_NAMES:
+            return None, "", f"pip-audit does not read {lock_path.name}"
+        tool, function = "pip-audit", _run_pip_audit
+    elif key in runners:
+        tool, function = runners[key]
+    else:
+        return None, "", f"no audit tool for {lock_path.name} here"
+    if tool not in tools:
+        return None, tool, f"{tool} is not installed"
+    if tool == "pnpm":
+        too_old = _pnpm_too_old(tools[tool], root)
+        if too_old:
+            return None, tool, str(too_old).splitlines()[0]
+    found, error = function(tools[tool], root, lock_path)
+    if error:
+        lines = str(error).splitlines()
+        return None, tool, f"{tool} failed: {lines[0] if lines else 'no message'}"
+    if key == "python":
+        return {_normalize_package(item.package) for item in found}, tool, ""
+    return {item.package for item in found}, tool, ""
+
+
+def _cross_check_artifacts(
+    findings: "list[Finding]", root: Path, lock_files: "dict[str, list[Path]]", tools: "dict[str, str]",
+) -> "list[Finding]":
+    """`findings` with every range-artifact one given the outcome of the ecosystem's own audit tool,
+    one run per lock file. An error of that run is no scan error: it only becomes the reason."""
+    by_lock = {_relative(path, root): (key, path) for key, paths in lock_files.items() for path in paths}
+    outcomes: dict[str, "tuple[Optional[set[str]], str, str]"] = {}
+    checked: list[Finding] = []
+    for finding in findings:
+        if not finding.range_artifact:
+            checked.append(finding)
+            continue
+        entry = by_lock.get(finding.lock_file)
+        if finding.lock_file not in outcomes:
+            if entry is None:
+                outcomes[finding.lock_file] = (None, "", f"lock file {finding.lock_file} not found for the cross-check")
+            else:
+                outcomes[finding.lock_file] = _cross_check_lock(entry[0], entry[1], root, tools)
+        names, tool, reason = outcomes[finding.lock_file]
+        if names is None:
+            outcome = f"none:{reason}"
+        else:
+            wanted = _normalize_package(finding.package) if entry and entry[0] == "python" else finding.package
+            outcome = f"{'reports' if wanted in names else 'absent'}:{tool}"
+        checked.append(dataclasses.replace(finding, cross_check=outcome))
+    return checked
+
+
 def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -> ScanResult:
     """One scan of `root`'s lock files: `osv-scanner` if installed (every detected lock file, one
     call), else one ecosystem-specific fallback tool per ecosystem that has one and is installed
@@ -1089,7 +1224,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
         result.tools_used.append("osv-scanner")
         if error:
             _record_error(result, f"osv-scanner: {error}", error)
-        result.findings.extend(findings)
+        result.findings.extend(_cross_check_artifacts(findings, root, lock_files, tools))
         return result
 
     if "npm" in lock_files:
@@ -1182,7 +1317,7 @@ def _format_finding_line(finding: Finding, accepted: "dict[str, str]") -> str:
     note = f" [accepted: {accepted[finding.advisory_id]}]" if finding.advisory_id in accepted else ""
     return (
         f"{finding.severity:<8} {finding.package} {finding.version} ({finding.advisory_id}) "
-        f"in {finding.lock_file}{fixed}{note}"
+        f"in {finding.lock_file}{fixed}{range_artifact_note(finding)}{note}"
     )
 
 

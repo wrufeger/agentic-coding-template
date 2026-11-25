@@ -16,6 +16,8 @@ cross-checked, and example paths in the project docs no longer count as dead lin
 ### Fixed
 - `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
   (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
+- `security_scan --deps` and the deps-scan check show the smallest osv-scanner fix newer than the installed one; a
+  finding without one is marked as a likely range artifact, cross-checked by npm, pnpm, composer or pip-audit.
 
 ## [2.7.0] - 2026-11-25
 

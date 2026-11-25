@@ -613,7 +613,7 @@ def _format_finding(finding: security_scan.Finding, accepted: "dict[str, str]") 
     accepted_note = f" [accepted: {accepted[finding.advisory_id]}]" if finding.advisory_id in accepted else ""
     return (
         f"{finding.package} {finding.version} ({finding.advisory_id}, {finding.severity}){fixed}"
-        f"{accepted_note}"
+        f"{security_scan.range_artifact_note(finding)}{accepted_note}"
     )
 
 
