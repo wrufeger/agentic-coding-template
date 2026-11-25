@@ -1791,6 +1791,10 @@ _DOCS_TICK_RE = re.compile(r"`([^`\n]+)`")
 _DOCS_LINK_TARGET_RE = re.compile(r"\]\(<?([^)<>\s]+)")
 _DOCS_PROJECT_PATH_RE = re.compile(r"^docs/project/[\w.\-/]+\.md$")
 _DOCS_PLACEHOLDER_RE = re.compile(r"YYYY|MM-DD|NNN|[<>*{}]")  # a pattern such as YYYY-MM-DD_title.md, not a path
+# an example hint (only at a word start); a path in backticks after one in the same sentence is no finding
+_DOCS_EXAMPLE_HINT_RE = re.compile(r"(?<!\w)(?:e\.\s?g\.|z\.\s?B\.|for example|zum Beispiel)", re.IGNORECASE)
+_DOCS_SENTENCE_END_RE = re.compile(r"[.!?](?:\s|$)")
+_DOCS_PARAGRAPH_START_RE = re.compile(r"^\s*(?:#|[-*+]\s|\d+\.\s|\|)")
 _QUESTION_ID_RE = re.compile(r"`Q(\d+)`")  # only an identifier in backticks is a question, not a quarter in prose
 _STATUS_LINE_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
 # the header line of a collection section: `status: done · archived: 2026-10-01 · file: ...` in inline code
@@ -1818,6 +1822,14 @@ def _unfenced(text: str) -> list[tuple[int, str]]:
         if not was_fenced and fence is None:
             out.append((number, line))
     return out
+
+
+def _after_example_hint(before: str) -> bool:
+    """True when `before` (the paragraph text up to a backtick path) holds an example hint with no sentence end
+    after it; backtick spans are removed first, so one hint covers a second path in the same sentence."""
+    plain = _DOCS_TICK_RE.sub("", before)
+    hints = list(_DOCS_EXAMPLE_HINT_RE.finditer(plain))
+    return bool(hints) and not _DOCS_SENTENCE_END_RE.search(plain[hints[-1].end():])
 
 
 def _git_ignored(root: Path) -> list[Path]:
@@ -1962,16 +1974,23 @@ def _check_docs_links(root: Path, docs: Path, ignored: list[Path]) -> list[Findi
             ))
         seen: set[str] = set()
         records = path == project / "decisions.md" or (project / "decisions") in path.parents
+        paragraph = ""  # the lines of the current paragraph before this one
+        previous = 0
         for number, line in ([] if records else _unfenced(text)):
+            if number != previous + 1 or not line.strip() or _DOCS_PARAGRAPH_START_RE.match(line):
+                paragraph = ""  # a fence, a blank line, a heading, a list item or a table row starts afresh
+            previous = number
             for match in _DOCS_TICK_RE.finditer(line):
                 token = match.group(1).strip()
                 if (_DOCS_PROJECT_PATH_RE.match(token) and not _DOCS_PLACEHOLDER_RE.search(token)
-                        and token not in seen and not (root / token).exists()):
+                        and token not in seen and not (root / token).exists()
+                        and not _after_example_hint(f"{paragraph} {line[:match.start()]}")):
                     seen.add(token)
                     findings.append(Finding(
                         path=_rel(path, root), line=number, kind="docs-link-dead",
                         message=f"path {token} does not exist",
                     ))
+            paragraph = "" if line.lstrip().startswith("|") else f"{paragraph} {line}"
     return findings
 
 

@@ -39,9 +39,11 @@ All six kinds are findings like any other (exit 1); none rewrites a file.
 - `docs-link-dead` — in `docs/README.md` and every Markdown file under `docs/project/`: a relative Markdown
   link or `<img src>` whose target does not exist, and a path in backticks that starts with `docs/project/`
   and ends in `.md` and does not exist (not checked in `decisions.md`: decision records name files that were
-  deleted later). Code blocks are skipped; a link whose text holds code is still checked. Limits: a path broken over
-  two lines, a path without a folder in front of it (a bare file name) and an anchor inside a file are not
-  seen.
+  deleted later). A path in backticks is no finding when it is a placeholder form (`<name>`, `YYYY`, `NNN`) or
+  when an example hint (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) stands before it in the same sentence (a
+  Markdown link or `<img src>` is always checked). Code blocks are skipped; a link whose text holds code is still
+  checked. Limits: a path broken over two lines, a path without a folder in front of it (a bare file name) and an
+  anchor inside a file are not seen.
 - `docs-concept-decided` — a file under `docs/project/concepts/` that names questions (as `Q<number>` in
   backticks; a bare quarter name in running text is not a question) when none of them is still open: each is answered or
   done (also in the archive or a monthly file), or its entry is gone and its number is reserved (left from the

@@ -10,6 +10,13 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
+Fewer false alarms: a dependency finding whose fix is not newer than the installed version is marked and
+cross-checked, and example paths in the project docs no longer count as dead links.
+
+### Fixed
+- `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
+  (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
+
 ## [2.7.0] - 2026-11-25
 
 Packages you add to a project after a plan and your yes and take out again, your rule file in `docs/ai/local/`, a
