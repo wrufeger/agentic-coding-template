@@ -1204,7 +1204,6 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("board-at-start", "Session length", values=_ON_OFF, default="on", effect=nxt)
     add("session-name", "Session length", default="project", effect=nxt)
     add("artifacts", "Session length", values=_ON_OFF, default="off", effect=nxt)
-    add("teach-lessons", "Teaching", values=("local", "docs"), default="local")
     add("dependency-check", "Dependencies", values=("never", "once", "regularly"), default="regularly",
         effect=nxt)
     add("docs-audit-due", "Docs audit", values=("off",), pattern=r"\d+\s*d\s*/\s*\d+\s*c", default="30d/100c",

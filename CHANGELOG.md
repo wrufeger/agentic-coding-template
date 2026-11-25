@@ -24,12 +24,18 @@ false alarms and a truer `update.py --plan`.
 ### Upgrading
 - Using `act-teach` or `act-slides`: run `/act-packages add teach` after the update; an unedited copy of the two
   skills goes with the update, an edited one stays.
+- Had `teach-lessons: docs`: the update removes the row from `docs/ai/config.md` and names the value; after
+  `/act-packages add teach` run `python .act/scripts/packages.py settings teach teach-lessons=docs`.
 
 ### Added
 - The update offers the package `teach` to a project that used the teaching skills (`.act-local/learn/`,
-  `docs/learn/`, `docs/presentation/*.md` or `teach-lessons: docs`); it writes nothing.
+  `docs/learn/`, `docs/presentation/*.md` or `teach-lessons: docs`); it only reads the project for that.
 
 ### Changed
+- The setting `teach-lessons` (`local` | `docs`, default `local`) moved into the package `teach`, which asks for it at
+  install; the template's `act-audit-docs` no longer mentions it, the package adds that part.
+- Migration `013-teach-lessons-row` removes the row `teach-lessons` and its paragraph from `docs/ai/config.md` (a
+  package settings block stays) and names a value other than `local`; `012` only offers the package.
 - When the context-size hint cannot save its state (`.act-local` is a link or leaves the project), it says so in
   one clause, since it then repeats on every prompt; other projects see no change.
 
