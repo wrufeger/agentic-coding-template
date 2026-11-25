@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "advisories": [
+    {
+      "id": "A1",
+      "severity": "warning",
+      "affected": ">=2.0.0 <2.7.0",
+      "fixed-in": "2.7.0",
+      "repeat": "once",
+      "text": "GitHub Copilot on Windows denies every tool call (hook errored) in a project whose tools include claude-code: it runs the template's Claude Code hooks but only their PowerShell form, which this version lacks. Update the template to 2.7.0 or later (act-update).",
+      "link": "https://github.com/wrufeger/agentic-coding-template/releases/tag/v2.7.0"
+    }
+  ]
+}
