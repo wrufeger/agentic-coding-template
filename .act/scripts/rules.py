@@ -615,8 +615,18 @@ def parse_template_set(path: Path, origin: str) -> TemplateSet:
     return TemplateSet(path=path, origin=origin, summary=summary, requires=requires, groups=groups)
 
 
-def resolve_template_set(project_set: ProjectSet) -> Optional[TemplateSet]:
-    resolved = actlib.resolve(strip_template_prefix(project_set.path))
+def resolve_template_set(project_set: ProjectSet, root: Optional[Path] = None,
+                         act_dir: Optional[Path] = None) -> Optional[TemplateSet]:
+    """The template set a project file's import points at. With `act_dir` (a fetched .act/, to preview an
+    update) the template default is read from there; a project override under docs/ai/local/ still wins."""
+    rel = strip_template_prefix(project_set.path)
+    if act_dir is not None and root is not None:
+        local = root / "docs" / "ai" / "local" / rel
+        if actlib.override_possible(rel) and local.is_file():
+            return parse_template_set(local, "local")
+        fetched = act_dir / rel
+        return parse_template_set(fetched, "template") if fetched.is_file() else None
+    resolved = actlib.resolve(rel)
     if resolved is None:
         return None
     path, origin = resolved
@@ -1200,19 +1210,22 @@ def method_findings(root: Path) -> list[tuple[str, str]]:
     return out
 
 
-def _rule_files_holding(root: Path, gid: str) -> list[str]:
+def _rule_files_holding(root: Path, gid: str, act_dir: Optional[Path] = None) -> list[str]:
     """Root-relative paths of the rule files that hold a rule with this ID: the shared and
     orchestrator files under .act/rules/ and docs/ai/local/rules/ (never topics/, whose detail
-    pages repeat rule headings)."""
+    pages repeat rule headings). With `act_dir` the template files are read from that fetched .act/,
+    named as if installed."""
     found: list[str] = []
-    for top in (root / ".act" / "rules", root / LOCAL_PREFIX / "rules"):
+    for top, anchor, prefix in ((act_dir / "rules" if act_dir is not None else root / ".act" / "rules",
+                                 act_dir if act_dir is not None else root, ".act/" if act_dir is not None else ""),
+                                (root / LOCAL_PREFIX / "rules", root, "")):
         for base in (top / "shared", top / "orchestrator"):
             if base.is_dir():
-                found.extend(_holding_in(root, base, gid))
+                found.extend(_holding_in(anchor, base, gid, prefix))
     return found
 
 
-def _holding_in(root: Path, base: Path, gid: str) -> list[str]:
+def _holding_in(root: Path, base: Path, gid: str, prefix: str = "") -> list[str]:
     found: list[str] = []
     for path in sorted(base.glob("*.md")):
         try:
@@ -1220,7 +1233,7 @@ def _holding_in(root: Path, base: Path, gid: str) -> list[str]:
         except (OSError, UnicodeDecodeError):
             continue
         if gid in template.groups:
-            found.append(path.relative_to(root).as_posix())
+            found.append(prefix + path.relative_to(root).as_posix())
     return found
 
 
@@ -1243,7 +1256,7 @@ def _line_block(lines: list[str], index: int) -> list[int]:
 REPORT_ONLY_MARKERS = ("the rule does not load", "has no effect")
 
 
-def move_core_entries(root: Path, write: bool = True) -> list[str]:
+def move_core_entries(root: Path, write: bool = True, act_dir: Optional[Path] = None) -> list[str]:
     """Follow a rule that the template moved from one rule file to another in docs/ai/local/rules.md. The
     file lists each rule as a checkbox line under the import of the file that holds it; after a
     move the line still sits under the old file, which the per-file checks (--list, --effective,
@@ -1256,13 +1269,14 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
     one block (only the last line counts). An ID that no rule file holds, one that is
     listed under the right file already, and an ambiguous one are left alone. Returns one message
     per moved or reported ID (also with write=False, which only reports); a second run finds
-    nothing to move."""
+    nothing to move. With `act_dir` the moves are judged against the rule files of that fetched .act/
+    (to preview an update) instead of the installed ones."""
     area = AREAS["core"]
     path = root / area.project_file
     if not path.is_file():
         return []
     project = parse_project_file(path, area)
-    templates = [resolve_template_set(pset) for pset in project.sets]
+    templates = [resolve_template_set(pset, root, act_dir) for pset in project.sets]
     messages: list[str] = []
     text, eol = _read_text_eol(path)
     lines = text.splitlines()
@@ -1313,7 +1327,7 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
                                     f"effect")
             elif not holders:
                 imported = {strip_template_prefix(p.path) for p in project.sets}
-                elsewhere = [f for f in _rule_files_holding(root, gid)
+                elsewhere = [f for f in _rule_files_holding(root, gid, act_dir)
                              if strip_template_prefix(f) not in imported and f not in imported]
                 if len(elsewhere) == 1:
                     messages.append(
@@ -1325,10 +1339,10 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
                     for ti, other in enumerate(templates):
                         if ti == si or other is None or other.origin != "local":
                             continue
-                        twin = root / ".act" / strip_template_prefix(project.sets[ti].path)
+                        twin = (act_dir or root / ".act") / strip_template_prefix(project.sets[ti].path)
                         if twin.is_file() and gid in parse_template_set(twin, "template").groups:
                             messages.append(
-                                f"{gid}: listed under {pset.path}, now in {twin.relative_to(root).as_posix()}, but "
+                                f"{gid}: listed under {pset.path}, now in .act/{strip_template_prefix(project.sets[ti].path)}, but "
                                 f"{other.path.relative_to(root).as_posix()} replaces that file and lacks the "
                                 "rule — the rule does not load")
                             break

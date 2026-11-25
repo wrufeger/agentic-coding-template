@@ -47,11 +47,13 @@ def _prune(sessions: dict) -> dict:
     return dict(newest)
 
 
-def _write_state(root: Path, state: dict) -> None:
+def _write_state(root: Path, state: dict) -> bool:
+    """Save the noted steps; False when `.act-local` is a link or leaves the project, so nothing was written."""
     path = _state_path(root)
     if not actlib.local_write_ok(root, path):
-        return  # .act-local is a link or leaves the project: nothing is written through it
+        return False  # nothing is written through it
     write_json_atomic(path, state, prefix=".context-hint-", sort_keys=True)
+    return True
 
 
 def observe(event: str, payload: dict) -> None:
@@ -80,13 +82,14 @@ def observe(event: str, payload: dict) -> None:
             return
         state["sessions"][session_id] = {"step": step, "at": time.time()}
         state["sessions"] = _prune(state["sessions"])
-        _write_state(root, state)
+        saved = _write_state(root, state)
         line = (f"[act] context ~{round(tokens / 1000)}k tokens (context-hint {threshold}): at the next task "
                 "boundary — task done and committed, no worker running, nothing left only in chat — run "
                 "python .act/scripts/handover.py, fix what it finds and leave each open task's state line, "
                 "then say \"now /clear\" in the closing line "
                 "and name the current size there as \"ctx <n>k\" (python .act/scripts/context_size.py); a bare \"continue\" picks up after it "
-                "(R-work-handover).")
+                "(R-work-handover)."
+                + ("" if saved else " (State not saved: .act-local is a link or leaves the project, so this note repeats on every prompt.)"))
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}}))
     except Exception:  # noqa: BLE001 — an observer never blocks
         return

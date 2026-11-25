@@ -10,14 +10,20 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
-Fewer false alarms: a dependency finding whose fix is not newer than the installed version is marked and
-cross-checked, and example paths in the project docs no longer count as dead links.
+Fewer false alarms and a truer `update.py --plan`: dependency findings and example paths are judged right, and rule
+moves show in the preview.
 
-### Fixed
-- `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
-  (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
+### Highlights
+- `update.py --plan` judges rule moves against the fetched template's rule files, so a `docs/ai/local/rules.md`
+  that only a move would change is named as one the update writes into and leaves out of its commit.
 - `security_scan --deps` and the deps-scan check show the smallest osv-scanner fix newer than the installed one; a
   finding without one is marked as a likely range artifact, cross-checked by npm, pnpm, composer or pip-audit.
+- `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
+  (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
+
+### Changed
+- When the context-size hint cannot save its state (`.act-local` is a link or leaves the project), it says so in
+  one clause, since it then repeats on every prompt; other projects see no change.
 
 ## [2.7.0] - 2026-11-25
 

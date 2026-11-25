@@ -1129,7 +1129,7 @@ def _plan_writes_owner_file(root: Path, rel: str, act_dir: Path) -> bool:
     fetched .act/ in `act_dir`: a .gitignore/.gitattributes block that still has lines to add or replace
     (the same merge init.py's _append_block applies), or a docs/ai/local/rules.md the rule steps would change."""
     if rel == rules.AREAS["core"].project_file:
-        return (step_move_core_entries(root, True)[0].startswith("would")
+        return (step_move_core_entries(root, True, act_dir)[0].startswith("would")
                 or step_add_missing_core_entries(root, True, act_dir)[0].startswith("would"))
     bridge = {".gitignore": "gitignore-lines", ".gitattributes": "gitattributes"}.get(rel)
     if bridge is None:
@@ -1234,10 +1234,11 @@ def _plan_methods_part(root: Path, act_dir: Optional[Path] = None) -> str:
     return f"; methods: {summary}" if summary else ""
 
 
-def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
+def step_move_core_entries(root: Path, plan: bool, act_dir: Optional[Path] = None) -> tuple[str, list[Path]]:
     """Follow a rule the replaced .act/rules/ moved to another file in docs/ai/local/rules.md
     (rules.move_core_entries). A docs/ai/local/rules.md that is still exactly its generated copy is
     skipped: the bridge refresh re-derives it, and moving lines first would make it look edited.
+    Under plan, `act_dir` is the fetched .act/ whose rule files the moves are judged against.
     Returns (summary, touched); nothing is written under plan."""
     rel = rules.AREAS["core"].project_file
     path = root / rel
@@ -1246,7 +1247,7 @@ def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
     try:
         if actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rel, "")):
             return "", []
-        messages = rules.move_core_entries(root, write=not plan)
+        messages = rules.move_core_entries(root, write=not plan, act_dir=act_dir if plan else None)
     except (OSError, UnicodeDecodeError) as exc:
         return f"rule moves not checked ({exc.__class__.__name__}: {exc})", []
     if not messages:
