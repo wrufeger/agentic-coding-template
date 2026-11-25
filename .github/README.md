@@ -123,8 +123,8 @@ follow them; Claude Code also calls them by name (`/act-bug`).
 | Design              | `act-design-ideas` (variants) · `act-design-build` (implement one) · `act-design-assets` (logo, icons)                                                                                                                               |
 | Handing over        | `act-handover` (can the session be left now, and the sentence for the new one)                                                                                                                                                       |
 | Shipping            | `act-commit` · `act-release` (version, changelog, tag) · `act-pr` · `act-issue` · `act-integrations` (GitHub/GitLab access)                                                                                                          |
-| Presenting          | `act-slides` (a deck from the project's docs)                                                                                                                                                                                        |
-| Learning            | `act-teach` (lessons on a topic, with exercises and a learning record)                                                                                                                                                               |
+| Presenting          | `act-slides` (a deck from the project's docs; comes with the package `teach`: `/act-packages add teach`)                                                                                                                             |
+| Learning            | `act-teach` (lessons on a topic, with exercises and a learning record; comes with the package `teach`: `/act-packages add teach`)                                                                                                    |
 | The template itself | `act-setup` · `act-adopt` · `act-update` · `act-version` (installed version, available releases) · `act-info` (which project, its state) · `act-config` (settings) · `act-doctor` (drift check) · `act-export-settings` / `act-load-settings` · `act-feedback` |
 
 ## Stays current

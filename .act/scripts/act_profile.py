@@ -38,9 +38,9 @@ CORE_SKILLS = frozenset({
     "act-config", "act-export-settings", "act-info", "act-load-settings", "act-version",
 })
 CORE_ROLES = frozenset({"builder", "debugger", "doc-writer", "explorer", "quick-check", "reviewer"})
-# What `standard` cuts (web, design and teaching); everything else stays. The design skills go by
+# What `standard` cuts (web and design); everything else stays. The design skills go by
 # their name prefix, so a design skill added later is cut too without this list changing.
-STANDARD_CUT_SKILLS = frozenset({"act-a11y", "act-check-translations", "act-seo", "act-slides", "act-teach"})
+STANDARD_CUT_SKILLS = frozenset({"act-a11y", "act-check-translations", "act-seo"})
 STANDARD_CUT_PREFIXES = ("act-design-",)
 # Rule files an exclusion never reaches (template-relative, "<layer>/<file>").
 LOCKED_RULES = frozenset({"shared/10-safety.md"})
@@ -383,7 +383,7 @@ def rule_dest(rel: str) -> str:
 
 def describe(cut: Cut) -> str:
     """The cut in one phrase for the session start: the profile and what the cut takes away, e.g.
-    "profile standard — left out: 8 skills, 1 rule file" (counts of what is really left out, so an
+    "profile standard — left out: 6 skills, 1 rule file" (counts of what is really left out, so an
     ignored `exclude` entry does not show)."""
     head = f"profile {cut.profile}" + ("" if cut.readable else " (docs/ai/config.md not readable)")
     parts: list[str] = []

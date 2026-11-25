@@ -68,7 +68,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "adopt",                    # adopt*.py: state, tables, rescued and aborted copies
     "import", "export",         # import/export scripts
     "feedback",                 # feedback.py: state, outbox entries, sent protocol
-    "learn",                    # act-teach skill: learning record per topic
+    "learn",                    # learning record per topic, kept for the `teach` package's act-teach skill (owner data)
     "packages",                 # packages.py: package folders resting before they are installed
     "package-notes",            # hooks/dispatch.py: once-per-session marker folder of the package notes (it prunes it itself)
     "usage",                    # hooks/checks/usage.py: event files
