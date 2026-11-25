@@ -10,7 +10,10 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
-Packages: rules, skills, roles and checks you add to a project after a plan and your yes, and take out again.
+## [2.7.0] - 2026-11-25
+
+Packages you add to a project after a plan and your yes and take out again, your rule file in `docs/ai/local/`, a
+whiteboard per person, and GitHub Copilot on Windows usable again in projects with Claude Code hooks.
 
 ### Highlights
 - **Packages:** `/act-packages` lists, fetches and installs a package (zip, folder or id) after its plan, a diff of
@@ -18,10 +21,28 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   `.act/formats/package.md`.
 - **Signed and scanned:** a package's origin is checked with `ssh-keygen -Y verify`; `packages-unverified` (`block`
   default, `scan`, `allow`) decides about one without a valid signature; `package_scan.py` lists what it can do.
-- **Packages take effect at the next session:** their rules are imported in marked blocks of `docs/ai/local/rules.md`,
-  rules they disable are unchecked, skill and role copies and check modules follow; all of it goes with `remove`.
+- **Copilot on Windows works again:** in a project with Claude Code hooks, GitHub Copilot on Windows refused every
+  tool call ("hook errored"); the hooks now run there in PowerShell, and a denial shows its reason.
+- **Your rule file moves to `docs/ai/local/rules.md`:** next to your other own files; `act-update` moves it, keeps your
+  own rules, boxes and package blocks, and points `CLAUDE.md`, `AGENTS.md` and `.gitattributes` at it.
+- **A whiteboard per person:** `docs/ai/whiteboard-<identity>.md` replaces the ideas file, a heading names the kind
+  (`Idea:`, `Bug:`, `Note:`, `Reminder <date>:` …); `act-update` moves each ideas file there byte for byte.
+
+### Upgrading from v2.6.0
+- If both `docs/ai/rules.md` and `docs/ai/local/rules.md` exist, `act-update` moves nothing: merge them by hand and
+  delete the old one; until then every session start says `docs/ai/rules.md is still at its old place`.
+- Read what migration 009 reports it left in `docs/ai/concept/` or `docs/ai/proposals/` and move it by hand; answer
+  the inbox questions it made from open rule proposals.
+- Own scripts or skills that call `ideas.py` or the topic `ideas` need `whiteboard.py` and the topic `whiteboard`.
+- Workers can no longer run `git update-ref`, tag changes, a writing `git symbolic-ref` or `git config` writes; leave
+  them to the orchestrator, or set `worker-git-write: warn` under § Checks.
+- If `docs/ai/local/` overrides rule files of `.act/rules/`, copy in the new sentences of `R-role-worker`,
+  `R-work-language`, `R-work-override`, `R-safe-foreign-text`, `R-work-record-now`, `R-human-chat`,
+  `R-human-capture`, `R-cost-delegate`.
 
 ### Added
+- Packages take effect at the next session: their rules are imported in marked blocks of `docs/ai/local/rules.md`,
+  rules they disable are unchecked, skill and role copies and check modules follow; all of it goes with `remove`.
 - `packages.py plan <zip|folder>` checks a package against the template and shows what installing it would do, with
   every reason when it is refused; `packages.py list` shows active and resting packages.
 - Package names: ids may not start with `act`, settings keys carry the package id, and two packages may extend the
@@ -52,9 +73,6 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   docs, docs order); the report names it, and a later run rewrites the report in place unless someone edited it.
 - New `act-doctor` check `inbox-stale` with config key `inbox-stale` in § Inbox (days, default 14, `off` or
   `0`): open inbox entries naming a done or archived task, backlog item or question, and open reports past the limit.
-- A whiteboard per person, `docs/ai/whiteboard-<identity>.md`, replaces the ideas file: a heading names its
-  kind (`Idea:`, `Bug:`, `Note:`, `Reminder <date>:`, `Reminder after <event>:`); notes are never reported.
-  Rules: `docs/ai/README.md`.
 - `entries.py archive` also rewrites backtick paths to an archived concept in the docs (not the journal) and
   lists what it cannot rewrite under `by hand:`.
 - `worker-run-watch` (`warn`, `off` skips it; § Checks of `docs/ai/config.md`) tells a worker and the orchestrator
@@ -68,12 +86,6 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   lines from your session's; the inbox report ignores it.
 
 ### Changed
-- Your rule file is now `docs/ai/local/rules.md`, next to your other own files. `act-update` moves it, keeps your own
-  rules, boxes and package blocks, rewrites its import lines, and points `CLAUDE.md`, `AGENTS.md` and `.gitattributes`
-  at it.
-- If `docs/ai/rules.md` and `docs/ai/local/rules.md` both exist, the update moves nothing and says so: merge them by
-  hand and delete the old one. Until the old file has moved, every session start says
-  `docs/ai/rules.md is still at its old place`.
 - A file directly in `docs/ai/local/`, such as `rules.md` (except `tips.md`), is never an override of a file of `.act/`.
 - `nuxt5` rules list the build warning `INEFFECTIVE_DYNAMIC_IMPORT` as normally harmless; it is a finding only when
   the dynamic import was meant to break a cycle or keep code out of the bundle.
@@ -118,8 +130,6 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   those in a call of their own; `warn` keeps its text.
 - The session start says `no rule file loaded` when `CLAUDE.md` leads to no rule file; before, it showed `rules: 0` or
   a count and nothing else.
-- GitHub Copilot on Windows refused every tool call in a project with Claude Code hooks ("hook errored"); the hooks
-  now run there, and a denial shows its reason.
 - Under Copilot the hooks do not check edits made through its `apply_patch` tool, and a project with only `copilot` in
   `tools` has no hooks yet.
 - `act-deps` no longer asks for a red commit: a change a version bump forces shares the bump's commit only when
@@ -673,7 +683,8 @@ First public pre-release of the previous generation (now the branch `v1`), docum
 ### Added
 - Rules in two layers (`AGENTS.md`, `CLAUDE.md`), 8 sub-agents, 6 skills and a `docs/ai/` working folder.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.6.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.7.0...HEAD
+[2.7.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...v2.4.0
