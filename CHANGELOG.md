@@ -64,6 +64,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   the old text.
 - `AGENTS.md` asks GitHub Copilot to delegate research, test runs, reviews and independent parts to the roles under
   `.github/agents/`, as parallel calls where the parts are independent.
+- `ACT_INCIDENT_ORIGIN=<mark>` adds an `origin` field to incident log lines, so a test runner can tell its own probes'
+  lines from your session's; the inbox report ignores it.
 
 ### Changed
 - Your rule file is now `docs/ai/local/rules.md`, next to your other own files. `act-update` moves it, keeps your own

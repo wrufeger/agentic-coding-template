@@ -13,8 +13,8 @@ Claude Code's are missing; the `powershell` form sets `ACT_HOOK_HOST=copilot`, a
 Claude Code key, its shell tool reported as `Bash` is judged as `PowerShell`, and a denial reason goes to standard
 output as well.
 
-**Incident log.** Only real faults are noted in `.act-local/incidents.jsonl` (time, kind, source, role, a short message;
-never a command or a path):
+**Incident log.** Only real faults are noted in `.act-local/incidents.jsonl` (time, kind, source, role, a short message,
+and an origin mark when `ACT_INCIDENT_ORIGIN` is set; never a command or a path):
 
 - `restored` / `restore-failed`: `protected-watch` put a worker's change to a protected file back, or could not (tool,
   kinds of file such as `git-hook`, their number);
@@ -34,7 +34,9 @@ start puts the new lines into the inbox report `Incident log <date>` (`kind: rep
 same day is extended, text a person added to it stays), equal lines as one row with a count, counts per kind on top, and
 is silent when nothing is new. Delivered lines are kept 30 days. It is written by `session-start-refresh: block`; with
 `warn` the start only says how many events wait. There is no config row of its own, but `ACT_INCIDENT_LOG=off` in the
-environment writes, counts and delivers nothing for one run (a test suite that drives the hooks). Limits: two appends at
+environment writes, counts and delivers nothing for one run (a test suite that drives the hooks).
+`ACT_INCIDENT_ORIGIN=<mark>` adds the field `origin` to each line written in that run (a test runner marks its own
+probes' lines with it; delivery ignores it). Limits: two appends at
 the same instant are serialised by a short lock file (`.act-local/incidents.lock`), also held while a delivery cuts old
 lines out; an event is appended only while the lock is held, waiting up to two seconds for it; when the lock cannot
 be taken in that time the event is not written (never an unlocked append, which could mix two lines), and a stale lock is

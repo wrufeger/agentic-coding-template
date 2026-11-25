@@ -17,6 +17,8 @@
 #          pending(root) -- how many events wait for delivery (reads only).
 # Switch:  ACT_INCIDENT_LOG=off in the environment: both write and deliver nothing for that run
 #          (a test suite that drives the hooks keeps the project's own log clean); is_off() tells.
+#          ACT_INCIDENT_ORIGIN=<mark> adds the key `origin` to a line (a test runner sets it to tell its own
+#          probes' lines from the session's); delivery ignores it.
 # Safety:  a line holds identifiers only (a check's module name, a tool name, a role/tier, a reason and a
 #          masked target class, the first word of a command when it is a plain word, else a class such as
 #          `(path)`) -- never a command, a path or a value that could be a secret; message and source are
@@ -50,6 +52,7 @@ OFFSET_FILE = Path(".act-local") / "incidents.offset"
 APPEND_LOCK = Path(".act-local") / "incidents.lock"
 KEEP_DAYS = 30
 OFF_ENV = "ACT_INCIDENT_LOG"  # "off" turns the log off for one run
+ORIGIN_ENV = "ACT_INCIDENT_ORIGIN"  # a non-blank value is written as the sixth key `origin` (cut to 80)
 _LOCK_WAIT = 1.0  # seconds to wait for entries.lock: SessionStart has a hard time limit
 _APPEND_WAIT = 2.0  # seconds to wait for the append lock; after that the event is not written
 _DENIED_GIVE_UP = 0.25  # seconds of PermissionError in a row after which the lock is given up
@@ -190,6 +193,9 @@ def record(root: Path, kind: str, source: str, message: str = "", role: str = ""
             return
         event = {"t": actlib.created_stamp(), "kind": _clean(kind, 20), "source": _clean(source, 40),
                  "role": _clean(role, 30), "msg": _clean(message, 100)}
+        origin = os.environ.get(ORIGIN_ENV, "").strip()
+        if origin:
+            event["origin"] = _clean(origin, 80)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = (json.dumps(event, ensure_ascii=True) + "\n").encode("ascii")
         with _AppendLock(root / APPEND_LOCK, wait) as lock:
