@@ -49,8 +49,9 @@ false alarms and a truer `update.py --plan`.
   forgot to return is committed too.
 - `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
   (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
-- `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker; `apply`
-  with any other option is still refused.
+- `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker, also with
+  `--index`, `--cached`, `--ignore-whitespace`, `--ignore-space-change` or `--whitespace=<action>`; other options stay
+  refused.
 
 ### Security
 - `worker-git-write` also refuses a worker's writing forms of `gc`, `prune`, `repack`, `notes`, `remote`, `reflog`,
@@ -58,6 +59,9 @@ false alarms and a truer `update.py --plan`.
   free.
 - `worker-git-write` also refuses a worker's `git fetch`, `clone` and `backfill`, and the writing forms of `submodule`
   and `lfs`; `submodule status`, `lfs ls-files` and the other reading forms stay free.
+- `worker-git-write` also refuses a worker's `git-lfs` writes, `git lfs -X …`, `fetch-pack`, `send-pack`,
+  `submodule--helper`, a `clone` or `init` from outside into the project, and a `-C` after a leading `cd` that leads
+  into the project.
 - The PowerShell reader of the write checks splits words like PowerShell: `a#b` is one word, a `<# #>` block comment,
   a lone carriage return and typographic quotes no longer hide a write behind them; `'a#b'` and `echo a #c` stay free.
 - A PowerShell assignment to a variable named like a file, `${C:\dir\file} = x` (also `+=`), counts as a write to that

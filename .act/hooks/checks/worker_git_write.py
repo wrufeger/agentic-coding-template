@@ -12,8 +12,10 @@
 #          `blame` are never in the write set. Commands with a reading form beside a writing one are decided by
 #          the helpers behind _READ_FORMS (`notes`, `replace`, `worktree`, `remote`, `reflog`, `prune`,
 #          `hash-object`, `history`, `sparse-checkout`, `bisect`, `rerere`, `apply`, `submodule`, `lfs`): the reading
-#          forms are named, every other form is a write; `fetch`, `clone` and `backfill` have no reading form.
-#          The deny-list stays: a subcommand this check does not know is free.
+#          forms are named, every other form is a write; `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`
+#          and `submodule--helper` have no reading form. The program `git-lfs` is judged like `git lfs`
+#          (_lfs_program_invocations). The deny-list stays: a subcommand this check does not know is free
+#          (`index-pack`, `unpack-objects` and the like are not in it).
 #          Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
@@ -25,10 +27,14 @@
 #
 #          Exempt: git run against a directory outside the project — a worker's own throwaway
 #          repo for a probe or a test build (`git -C <tmp> commit`, `cd <tmp> && git init`). See
-#          _leading_cd_outside_project and _parse_git_invocation's `-C` handling for exactly what
+#          _leading_cd_run_directory and _parse_git_invocation's `-C` handling for exactly what
 #          is recognized, and "Known limits" below for what is deliberately NOT — the exemption
 #          only ever *widens* what is allowed, so anything ambiguous fails toward still checking
-#          the call, never toward skipping it.
+#          the call, never toward skipping it. A `-C` after a leading `cd` counts from that `cd` folder, inside the
+#          project or outside it, and the exemption holds only when the result lies outside the project. The
+#          exemption does not cover a `clone` or `init` whose target
+#          folder (or `--separate-git-dir`), resolved against the `-C`/`cd` directory, lies inside the project or
+#          cannot be resolved (_target_enters_project): the repository would be created in the project.
 #
 # Review fixes (2026-09-23, on top of the command_words.py rewrite):
 #   - every `-C <dir>` on one invocation is applied in order against the running directory
@@ -52,7 +58,7 @@
 #   - the outside-project exemption only recognizes a literal `-C <dir>` chain on the git
 #     invocation itself, or a literal `cd <dir>`-family command as the *whole command's own first
 #     simple command* with no later cd-like command anywhere after it
-#     (_leading_cd_outside_project) — both shapes named in the assignment's own examples. A `cd` inside
+#     (_leading_cd_run_directory) — both shapes named in the assignment's own examples. A `cd` inside
 #     `( ... )` counts only when every command of the line is inside that group (`(cd x && git commit)`);
 #     `(cd x) && git commit` runs the commit where the shell was (_group_closes_before_end). A `cd`
 #     buried deeper, inside a function, guarded by `if`, or naming a dynamic directory ($VAR,
@@ -74,6 +80,7 @@ from typing import Optional
 import actlib
 
 from .command_parse import Parse, parse_for
+from .command_words import _strip_command_prefix
 from .common import _check_mode, _is_worker, _shell_command
 from .shell_targets import (
     _GIT_GLOBAL_VALUE_FLAGS,
@@ -86,7 +93,9 @@ __all__ = [
     "_GIT_WRITE_SUBCOMMANDS", "_branch_lists_only", "_CD_LIKE_NAMES", "_CD_UNKNOWN_NAMES",
     "_parse_git_invocation", "_is_git_write_subcommand", "_resolve_dir", "_is_outside_root",
     "_resolve_dash_c_chain", "_prefix_has_dir_override", "_first_operand",
-    "_leading_cd_directory", "_leading_cd_outside_project", "_worker_git_write_message", "check_worker_git_write",
+    "_leading_cd_directory", "_leading_cd_run_directory", "_leading_cd_outside_project",
+    "_worker_git_write_message", "check_worker_git_write",
+    "_lfs_program_invocations", "_target_enters_project",
 ]
 
 # Every git subcommand that changes the tree or history for this check's purposes. "init" is
@@ -97,14 +106,15 @@ __all__ = [
 # change this check exists to keep a worker from doing unsupervised.
 #
 # The second row has no reading form at all (maintenance and history rewriting, plumbing that writes
-# objects, the index or the working tree, and the commands that fetch from or clone a remote: the orchestrator
-# provides a remote's state); `apply` is not here, it is read through _apply_reads_only.
+# objects, the index or the working tree, the commands that fetch from, push to or clone a remote, `fetch-pack` and
+# `send-pack` behind them and the internal `submodule--helper`: the orchestrator provides a remote's state); `apply`
+# is not here, it is read through _apply_reads_only.
 _GIT_WRITE_SUBCOMMANDS = frozenset({
     "commit", "add", "stash", "checkout", "switch", "reset", "restore", "merge", "rebase",
     "clean", "push", "pull", "cherry-pick", "revert", "am", "rm", "mv", "init",
     "gc", "repack", "pack-refs", "maintenance", "filter-branch", "fast-import", "update-index", "read-tree",
     "write-tree", "commit-tree", "mktag", "mktree", "checkout-index",
-    "fetch", "clone", "backfill",
+    "fetch", "clone", "backfill", "fetch-pack", "send-pack", "submodule--helper",
 })
 
 _BRANCH_SHORT_RE = re.compile(r"-[alrvi]+")
@@ -421,10 +431,11 @@ def _submodule_reads_only(args: list[str]) -> bool:
 
 
 def _lfs_reads_only(args: list[str]) -> bool:
-    """True for `git lfs ls-files`, `status`, `env`, `version` and `locks` only; options before the subcommand are
-    skipped. A bare `git lfs` and every other subcommand (`pull`, `fetch`, `push`, `checkout`, `install`, `track`,
-    `lock`, `unlock`, `prune`, `migrate` …) are refused."""
-    return _subcommand_after_options(args)[0] in _LFS_READ_SUBCOMMANDS
+    """True for `git lfs ls-files`, `status`, `env`, `version` and `locks` only, as the very first word after `lfs`.
+    An option before the subcommand refuses (`git lfs -X ls-files pull`: lfs may read the next word as the value of
+    an option it does not know and then run `pull`), and so does a bare `git lfs` and every other subcommand
+    (`pull`, `fetch`, `push`, `checkout`, `install`, `track`, `lock`, `unlock`, `prune`, `migrate` …)."""
+    return bool(args) and args[0] in _LFS_READ_SUBCOMMANDS
 
 
 def _reflog_reads_only(args: list[str]) -> bool:
@@ -490,22 +501,27 @@ def _rerere_reads_only(args: list[str]) -> bool:
 _APPLY_ANALYSIS_FLAGS = frozenset({"--check", "--stat", "--numstat", "--summary"})
 _APPLY_PLAIN_FLAGS = frozenset({
     "-v", "--verbose", "-q", "--quiet", "-z", "-R", "--reverse", "--recount", "--allow-empty", "--unidiff-zero", "-",
+    "--index", "--cached", "--ignore-whitespace", "--ignore-space-change",
 })
 _APPLY_NUMBER_RE = re.compile(r"-[pC]\d+")
 _APPLY_VALUE_PREFIXES = ("--include=", "--exclude=", "--directory=")
+_APPLY_WHITESPACE_RE = re.compile(r"--whitespace=(?:nowarn|warn|fix|error|error-all)")
 
 
 def _apply_reads_only(args: list[str]) -> bool:
     """True for an `apply` that only analyses a patch: at least one of `--check`, `--stat`, `--numstat`, `--summary`,
     and every other word is `-v`, `--verbose`, `-q`, `--quiet`, `-z`, `-R`, `--reverse`, `--recount`,
-    `--allow-empty`, `--unidiff-zero`, `-p<n>`, `-C<n>`, `--include=`, `--exclude=`, `--directory=`, `-` or a word that
-    is no option (a patch file). Any other word (`--apply`, `--index`, `--cached`, `--3way`, `--reject`, `--no-…`, an
+    `--allow-empty`, `--unidiff-zero`, `--index`, `--cached`, `--ignore-whitespace`, `--ignore-space-change`,
+    `--whitespace=<action>` (`nowarn`, `warn`, `fix`, `error`, `error-all`, the glued form only), `-p<n>`, `-C<n>`,
+    `--include=`, `--exclude=`, `--directory=`, `-` or a word that is no option (a patch file). Any other word
+    (`--apply`, `--reject`, `--build-fake-ancestor`, `--3way`, `--no-…`, `--whitespace` with a separate value, an
     abbreviation) makes it a write: an allow-list, per word."""
     if not any(arg in _APPLY_ANALYSIS_FLAGS for arg in args):
         return False
     return all(
         not arg.startswith("-") or arg in _APPLY_ANALYSIS_FLAGS or arg in _APPLY_PLAIN_FLAGS
         or _APPLY_NUMBER_RE.fullmatch(arg) is not None or arg.startswith(_APPLY_VALUE_PREFIXES)
+        or _APPLY_WHITESPACE_RE.fullmatch(arg) is not None
         for arg in args
     )
 
@@ -534,7 +550,9 @@ _WRITE_FORM_TEXT = {
     "symbolic-ref": "changes where a symbolic ref (HEAD) points",
     "tag": "creates, changes or deletes a tag; a worker may list tags with `git tag -l`",
     "config": "writes git configuration; a worker may read it with `git config <key>`, `--get` or `--list`",
-    "apply": "applies a patch; a worker may check one with `git apply --check`, `--stat`, `--numstat` or `--summary`",
+    "apply": ("applies a patch; a worker may check one with `git apply --check`, `--stat`, `--numstat` or `--summary`, "
+              "also with `--index`, `--cached`, `--ignore-whitespace`, `--ignore-space-change` or "
+              "`--whitespace=<action>`, but never with `--apply`, `--reject` or `--build-fake-ancestor`"),
     "notes": "changes notes; a worker may read them with `git notes`, `git notes list`, `show` or `get-ref`",
     "replace": "creates, changes or deletes a replace ref; a worker may list them with `git replace -l`",
     "worktree": "changes worktrees; a worker may list them with `git worktree list`",
@@ -555,7 +573,21 @@ _WRITE_FORM_TEXT = {
     "submodule": ("fetches, changes or runs commands in submodules; a worker may read them with `git submodule`, "
                   "`status` or `summary`"),
     "lfs": ("downloads, changes or locks large files; a worker may read them with `git lfs ls-files`, `status`, "
-            "`env`, `version` or `locks`"),
+            "`env`, `version` or `locks` as the first word after `lfs` (an option before it is refused); `git-lfs` "
+            "is judged the same way"),
+    "fetch-pack": "fetches from a remote; the orchestrator provides a remote's state, not a worker",
+    "send-pack": "pushes to a remote; the orchestrator publishes, not a worker",
+    "submodule--helper": ("is the internal helper of `git submodule` and fetches or changes submodules; a worker may "
+                          "read them with `git submodule status` or `summary`"),
+}
+
+# What is refused when `clone` or `init` runs from a folder outside the project but its target lies inside the
+# project or cannot be resolved (_target_enters_project), in the same table form.
+_TARGET_IN_PROJECT_TEXT = {
+    "clone": ("clones into a folder inside the project, or one that cannot be resolved (a variable, `~`), although "
+              "`-C` or `cd` points outside it; give a literal target folder outside the project, or none"),
+    "init": ("creates a repository in a folder inside the project, or one that cannot be resolved (a variable, `~`), "
+             "although `-C` or `cd` points outside it; give a literal target folder outside the project, or none"),
 }
 
 
@@ -689,25 +721,133 @@ def _leading_cd_directory(
     return True, resolved
 
 
-def _leading_cd_outside_project(
-    command: str, base_cwd: Optional[str], root: Optional[Path], parse: Optional[Parse] = None,
-) -> bool:
-    """True only when the whole command's very first simple command is a `cd`-family invocation
-    (_CD_LIKE_NAMES) with a literal directory operand resolving outside `root`, AND no later
+def _leading_cd_run_directory(
+    command: str, base_cwd: Optional[str], parse: Optional[Parse] = None,
+) -> Optional[Path]:
+    """The directory of the whole command's very first simple command when that is a `cd`-family invocation
+    (_CD_LIKE_NAMES) with a literal directory operand, inside the project or outside it, AND no later
     simple command changes directory again (_CD_LIKE_NAMES or _CD_UNKNOWN_NAMES) -- see this
     module's Known limits for why a second directory change anywhere disables the exemption
-    entirely rather than tracking which git call comes after which cd. `parse` is the dispatcher's
-    reading of `command`; without it the command is read here."""
-    if base_cwd is None or root is None:
-        return False
+    entirely rather than tracking which git call comes after which cd; None otherwise. A `-C` of a git call
+    after such a `cd` counts from this directory. `parse` is the dispatcher's reading of `command`; without it
+    the command is read here."""
+    if base_cwd is None:
+        return None
     if parse is None:
         parse = Parse("Bash", command)
     determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd, parse)
-    return determinable and directory is not None and _is_outside_root(directory, root)
+    return directory if determinable else None
 
 
-def _worker_git_write_message(subcommand: str) -> str:
-    form = _WRITE_FORM_TEXT.get(subcommand)
+def _leading_cd_outside_project(
+    command: str, base_cwd: Optional[str], root: Optional[Path], parse: Optional[Parse] = None,
+) -> bool:
+    """True only when _leading_cd_run_directory names a directory outside `root`: the whole command's very first
+    simple command is a `cd` to a literal directory outside the project and no later command changes directory."""
+    if root is None:
+        return False
+    directory = _leading_cd_run_directory(command, base_cwd, parse)
+    return directory is not None and _is_outside_root(directory, root)
+
+
+_LFS_PROGRAM = "git-lfs"
+
+
+def _ps_call_behind_assignment(words: list[str]) -> Optional[list[str]]:
+    """The call of a PowerShell statement `$name = [&] <program> args...` (the program and its arguments), None for a
+    statement of another shape."""
+    if len(words) < 3 or words[1] != "=" or not re.fullmatch(r"\$(?:\w+:)?\w+", words[0]):
+        return None
+    call = words[2:]
+    if call[0] == "&" and len(call) > 1:
+        call = call[1:]
+    return call
+
+
+def _lfs_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
+    """Every call of the program `git-lfs` (also `git-lfs.exe`, with a directory in front, in any case) as
+    (prefix words, argv) like Parse.git_invocations_with_prefix gives a git call, with the argv rewritten to
+    `lfs <arguments>`: the program is `git lfs` under another name, so the loop of check_worker_git_write judges it
+    the same way, exemptions included. A call behind a PowerShell variable assignment (`$r = git-lfs pull`), which
+    the Bash reader takes for a command named `$r`, is read from the PowerShell word lists."""
+    found = []
+    for words, _ in parse.words():
+        stripped = _strip_command_prefix(words)
+        if stripped and _command_name(stripped[0]) == _LFS_PROGRAM:
+            found.append((words[: len(words) - len(stripped)], ["lfs", *stripped[1:]]))
+    if parse.tool_name == "PowerShell":
+        for words in parse.ps_words():
+            call = _ps_call_behind_assignment(words)
+            if call and _command_name(call[0]) == _LFS_PROGRAM:
+                found.append(([], ["lfs", *call[1:]]))
+    return found
+
+
+# Options of `clone` and `init` that take a value as the next word, by the full long name git knows, and the short
+# ones (`-o`, `-b`, `-u`, `-j`, `-c`: the value is the rest of the word or, as the last character of a bundle, the next
+# word). An abbreviated long option never takes the next word here: it may be an option that takes a value only glued
+# with `=` (`--sh` is `init --shared`), and swallowing a word that is the target would hide it. Only an abbreviation
+# of `--separate-git-dir` counts, and its value is a target.
+_TARGET_VALUE_OPTIONS = (
+    "--origin", "--branch", "--upload-pack", "--reference", "--reference-if-able", "--depth", "--shallow-since",
+    "--shallow-exclude", "--jobs", "--template", "--config", "--server-option", "--filter", "--bundle-uri",
+    "--ref-format", "--object-format", "--initial-branch", "--revision",
+)
+_SEPARATE_GIT_DIR = "--separate-git-dir"
+_TARGET_VALUE_SHORT = frozenset("obujc")
+_MIN_ABBREVIATION = 4  # `--se` is ambiguous in git, `--sep` is not; shorter words stay flags here
+
+
+def _clone_init_targets(subcommand: str, sub_args: list[str]) -> list[str]:
+    """The folders a `clone` or `init` writes into, as typed: for `clone` the words after the repository, for
+    `init` every non-option word, and the value of `--separate-git-dir` (also abbreviated, glued or separate). The
+    separate value of every other option that takes one, by its full name, is skipped; an abbreviated one takes no
+    next word (its next word counts as a target, which only ever refuses more), and a word after `--` is no option. A
+    clone without a folder names it from the URL under the working directory: no word, no target."""
+    positional: list[str] = []
+    separate: list[str] = []
+    options_over = False
+    index = 0
+    while index < len(sub_args):
+        arg = sub_args[index]
+        index += 1
+        if options_over or not arg.startswith("-") or arg == "-":
+            positional.append(arg)
+        elif arg in _END_OF_OPTIONS:
+            options_over = True
+        elif arg.startswith("--"):
+            name, equals, value = arg.partition("=")
+            abbreviation = len(name) >= _MIN_ABBREVIATION
+            if name == _SEPARATE_GIT_DIR or (abbreviation and _SEPARATE_GIT_DIR.startswith(name)):
+                if equals:
+                    separate.append(value)
+                elif index < len(sub_args):
+                    separate.append(sub_args[index])
+                    index += 1
+            elif not equals and name in _TARGET_VALUE_OPTIONS:
+                index += 1
+        else:
+            for position, char in enumerate(arg[1:], 1):
+                if char in _TARGET_VALUE_SHORT:
+                    index += position + 1 == len(arg)  # the value is the next word
+                    break
+    return (positional[1:] if subcommand == "clone" else positional) + separate
+
+
+def _target_enters_project(subcommand: str, sub_args: list[str], run_dir: Optional[Path], root: Path) -> bool:
+    """True when a `clone` or `init` that runs from `run_dir` (outside the project) writes a repository into the
+    project or somewhere not known to be outside it: a target (_clone_init_targets) resolving, against `run_dir`,
+    to a path inside `root`, or one that cannot be resolved (a variable, a leading `~`), or an unknown `run_dir`.
+    No target (the folder comes from the URL, or a bare `init`) stays outside."""
+    for raw in _clone_init_targets(subcommand, sub_args):
+        resolved = None if run_dir is None else _resolve_dir(raw, str(run_dir))
+        if resolved is None or not _is_outside_root(resolved, root):
+            return True
+    return False
+
+
+def _worker_git_write_message(subcommand: str, target_in_project: bool = False) -> str:
+    form = (_TARGET_IN_PROJECT_TEXT if target_in_project else _WRITE_FORM_TEXT).get(subcommand)
     return (
         f"[act] git is read-only for workers (status/diff/log/show, ...) — git {subcommand} "
         + (form if form else "changes the tree or history")
@@ -737,11 +877,12 @@ def check_worker_git_write(payload: dict) -> int:
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
     parse = parse_for(payload, command)
-    leading_cd_outside = _leading_cd_outside_project(command, base_cwd, root, parse)
+    leading_cd_directory = _leading_cd_run_directory(command, base_cwd, parse)
 
     invocations = parse.git_invocations_with_prefix()
     if parse.tool_name == "PowerShell":
         invocations += parse.assigned_git_invocations()  # `$r = git commit -m x`: the Bash reader sees `$r`
+    invocations += _lfs_program_invocations(parse)  # `git-lfs pull` is `git lfs pull`
     for prefix, args in invocations:
         subcommand, sub_args, dash_c_dirs, has_dir_override, alias_defined = _parse_git_invocation(args)
         if subcommand is None:
@@ -751,15 +892,25 @@ def check_worker_git_write(payload: dict) -> int:
 
         never_exempt = (has_dir_override or _prefix_has_dir_override(prefix)
                         or (subcommand == "config" and _config_escapes_repo(sub_args)))
+        target_in_project = False
         if not never_exempt:
-            if leading_cd_outside:
-                continue
-            if root is not None and base_cwd is not None and dash_c_dirs:
-                chain = _resolve_dash_c_chain(dash_c_dirs, base_cwd)
-                if _is_outside_root(chain, root):
+            # where the call runs: a leading `cd` (inside the project too) is the start of the `-C` chain, else the
+            # working directory; the exemption holds only when that lies outside the project
+            run_dir: Optional[Path] = None
+            if leading_cd_directory is not None:
+                run_dir = (_resolve_dash_c_chain(dash_c_dirs, str(leading_cd_directory))
+                           if dash_c_dirs else leading_cd_directory)
+            elif base_cwd is not None and dash_c_dirs:
+                run_dir = _resolve_dash_c_chain(dash_c_dirs, base_cwd)
+            exempt = root is not None and _is_outside_root(run_dir, root)
+            if exempt:
+                # a clone or init from outside still writes into the project when its target lies there
+                target_in_project = (subcommand in _TARGET_IN_PROJECT_TEXT and root is not None
+                                     and _target_enters_project(subcommand, sub_args, run_dir, root))
+                if not target_in_project:
                     continue
 
-        message = _worker_git_write_message(subcommand)
+        message = _worker_git_write_message(subcommand, target_in_project)
         if mode == "warn":
             print(message)
             return 0

@@ -68,7 +68,7 @@ The sentences are these:
 - `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, Copilot roles under `.github/agents/`, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
-- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`, `notes list`, `remote -v`, `reflog`, `worktree list`, `apply --check`, `submodule status`, `lfs ls-files`): never stage, commit, stash, reset or check out, never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`, never run a maintenance, plumbing or notes/remote/worktree/reflog command that writes (`gc`, `prune`, `notes add`, `remote add`, `worktree add`, `hash-object -w` …), and leave `fetch`, `clone`, `backfill` and the writing forms of `submodule` and `lfs` to the orchestrator.
+- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`, `notes list`, `remote -v`, `reflog`, `worktree list`, `apply --check` (also with `--index`, `--cached` or `--whitespace=nowarn`), `submodule status`, `lfs ls-files` with no option before the subcommand): never stage, commit, stash, reset or check out, never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`, never run a maintenance, plumbing or notes/remote/worktree/reflog command that writes (`gc`, `prune`, `notes add`, `remote add`, `worktree add`, `hash-object -w` …), leave `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`, `submodule--helper` and the writing forms of `submodule` and `lfs` (also as `git-lfs`) to the orchestrator, and never `clone` or `init` into a folder of the project from a `-C` or `cd` outside it.
 - `nesting_guard`: Never start another worker; name a better split in your result.
 - `mcp_ide`: Do not use IDE tools that write, run a shell or run a program; use the standard tools inside your `Write scope:`.
 - `commit_pathspec`: Never stage with `git add -A`, `git add .` or `git commit -a`; name each path.
@@ -381,8 +381,10 @@ that creates, changes or deletes a tag (a name without `-l`/`--list`/`-v`/`--ver
 `--rename-section`, `--remove-section`, `-e`, the new syntax `set`, `unset`, `rename-section`, `remove-section`, `edit`,
 or a key with a value). Reading stays free: `symbolic-ref <name>`, `tag`, `tag -l`, `tag -v`, `config <key>`, `--get*`,
 `--list`, `config get`. Git run against a folder outside the project (`git -C <folder>`, a leading `cd <folder>`) is
-exempt, but a `config` write with `--global`, `--system` or `--file` is refused there too: it writes the user's, the
-machine's or a named file, not that repository.
+exempt (a `-C` after a leading `cd` counts from the folder of that `cd`, inside the project too, so
+`cd src && git -C .. commit` is refused; a `-C` that leads back into the project, or cannot be resolved, ends the
+exemption), but a `config` write with `--global`, `--system` or `--file` is refused there too: it writes the user's, the machine's or
+a named file, not that repository.
 
 It also refuses the typed writing forms of further commands. Refused in every form, because they have no reading form:
 `gc`, `repack`, `pack-refs`, `maintenance`, `filter-branch`, `fast-import`, `update-index`, `read-tree`, `write-tree`,
@@ -394,15 +396,22 @@ a write): `notes` (free: bare, `list`, `show`, `get-ref`), `replace` (bare, `-l`
 with `--dry-run`; it has no `-n`), `sparse-checkout` (`list`),
 `bisect` (bare, `log`, `visualize`/`view`, `terms`, `help`), `rerere` (`status`, `diff`, `remaining`). `apply` is
 free when it only analyses a patch: one of `--check`, `--stat`, `--numstat` or `--summary`, and every other word is
-`-v`/`--verbose`, `-q`/`--quiet`, `-z`, `-R`/`--reverse`, `--recount`, `--allow-empty`, `--unidiff-zero`, `-p<n>`,
-`-C<n>`, `--include=`, `--exclude=`, `--directory=`, `-` or a patch file; `--apply`, `--index`, `--cached`, `--3way`,
-`--reject`, any `--no-…` word or an abbreviation keeps it refused. A dry run is a word exactly `-n` or `--dry-run`
+`-v`/`--verbose`, `-q`/`--quiet`, `-z`, `-R`/`--reverse`, `--recount`, `--allow-empty`, `--unidiff-zero`, `--index`,
+`--cached`, `--ignore-whitespace`, `--ignore-space-change`, `--whitespace=<action>` (`nowarn`, `warn`, `fix`, `error`
+or `error-all`, glued with `=`; a separate value is refused like `-p 1`), `-p<n>`, `-C<n>`, `--include=`, `--exclude=`,
+`--directory=`, `-` or a patch file; `--apply`, `--reject`, `--build-fake-ancestor`, `--3way`, any `--no-…` word or an
+abbreviation keeps it refused. A dry run is a word exactly `-n` or `--dry-run`
 before any `--` or `--end-of-options`, with no word that starts with `--no-` (git reads `--no-dry-run` as the write);
 an abbreviation such as `--dry` is refused, and so is a `-n` that is the value of `--expire`. Options before the
 subcommand (`git notes --ref=x add`, `git -C <folder> …`) are skipped when the subcommand is found. The commands that
-work with a remote are refused too: `fetch`, `clone` and `backfill` in every form (the orchestrator provides a remote's
-state), `submodule` except bare, `status` and `summary`, and `lfs` except `ls-files`, `status`, `env`, `version` and
-`locks` (a bare `git lfs` is refused). The check reads the words typed: an alias
+work with a remote are refused too: `fetch`, `clone`, `backfill`, `fetch-pack` and `send-pack` in every form (the
+orchestrator provides a remote's state), `submodule` except bare, `status` and `summary` (`submodule--helper`, git's
+internal helper, in every form), and `lfs` except `ls-files`, `status`, `env`, `version` and `locks` as the very first
+word after `lfs` (a bare `git lfs` and an option before the subcommand, `git lfs -X ls-files pull`, are refused); the
+program `git-lfs` (also `git-lfs.exe`, with a directory in front, in any case) is judged exactly like `git lfs`. The
+exemption for a folder outside the project does not cover a `clone` or `init` whose target folder or
+`--separate-git-dir` value, resolved against the `-C`/`cd` folder, lies inside the project or holds a variable or a
+leading `~`; without a target (the folder comes from the URL, a bare `init`) it stays. The check reads the words typed: an alias
 from the repository's or the user's git configuration (`alias.zz = commit`, then `git zz`) is invisible to it, as is a
 variable that expands to an option; only a `-c alias.<name>=…` on the call itself is refused.
 
