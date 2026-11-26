@@ -56,6 +56,8 @@ false alarms and a truer `update.py --plan`.
 - `worker-git-write` also refuses a worker's writing forms of `gc`, `prune`, `repack`, `notes`, `remote`, `reflog`,
   `worktree`, `history`, `hash-object -w` and more; reading forms (`notes list`, `remote -v`, `prune --dry-run`) stay
   free.
+- `worker-git-write` also refuses a worker's `git fetch`, `clone` and `backfill`, and the writing forms of `submodule`
+  and `lfs`; `submodule status`, `lfs ls-files` and the other reading forms stay free.
 - The PowerShell reader of the write checks splits words like PowerShell: `a#b` is one word, a `<# #>` block comment,
   a lone carriage return and typographic quotes no longer hide a write behind them; `'a#b'` and `echo a #c` stay free.
 - A PowerShell assignment to a variable named like a file, `${C:\dir\file} = x` (also `+=`), counts as a write to that

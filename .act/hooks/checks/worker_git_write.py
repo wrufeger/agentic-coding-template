@@ -11,8 +11,9 @@
 #          _config_escapes_repo); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
 #          `blame` are never in the write set. Commands with a reading form beside a writing one are decided by
 #          the helpers behind _READ_FORMS (`notes`, `replace`, `worktree`, `remote`, `reflog`, `prune`,
-#          `hash-object`, `history`, `sparse-checkout`, `bisect`, `rerere`, `apply`): the reading forms are named, every
-#          other form is a write. The deny-list stays: a subcommand this check does not know is free.
+#          `hash-object`, `history`, `sparse-checkout`, `bisect`, `rerere`, `apply`, `submodule`, `lfs`): the reading
+#          forms are named, every other form is a write; `fetch`, `clone` and `backfill` have no reading form.
+#          The deny-list stays: a subcommand this check does not know is free.
 #          Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
@@ -96,12 +97,14 @@ __all__ = [
 # change this check exists to keep a worker from doing unsupervised.
 #
 # The second row has no reading form at all (maintenance and history rewriting, plumbing that writes
-# objects, the index or the working tree); `apply` is not here, it is read through _apply_reads_only.
+# objects, the index or the working tree, and the commands that fetch from or clone a remote: the orchestrator
+# provides a remote's state); `apply` is not here, it is read through _apply_reads_only.
 _GIT_WRITE_SUBCOMMANDS = frozenset({
     "commit", "add", "stash", "checkout", "switch", "reset", "restore", "merge", "rebase",
     "clean", "push", "pull", "cherry-pick", "revert", "am", "rm", "mv", "init",
     "gc", "repack", "pack-refs", "maintenance", "filter-branch", "fast-import", "update-index", "read-tree",
     "write-tree", "commit-tree", "mktag", "mktree", "checkout-index",
+    "fetch", "clone", "backfill",
 })
 
 _BRANCH_SHORT_RE = re.compile(r"-[alrvi]+")
@@ -405,6 +408,25 @@ def _remote_reads_only(args: list[str]) -> bool:
     return subcommand == "prune" and _is_dry_run(args)
 
 
+_SUBMODULE_READ_SUBCOMMANDS = frozenset({"status", "summary"})
+_LFS_READ_SUBCOMMANDS = frozenset({"ls-files", "status", "env", "version", "locks"})
+
+
+def _submodule_reads_only(args: list[str]) -> bool:
+    """True for `git submodule` bare (options only, `--quiet`, `--cached`), `status` and `summary`; options before the
+    subcommand are skipped. Every other subcommand (`add`, `init`, `deinit`, `update`, `set-branch`, `set-url`, `sync`,
+    `absorbgitdirs`, `foreach`) and any other word writes or fetches."""
+    subcommand, _ = _subcommand_after_options(args)
+    return subcommand is None or subcommand in _SUBMODULE_READ_SUBCOMMANDS
+
+
+def _lfs_reads_only(args: list[str]) -> bool:
+    """True for `git lfs ls-files`, `status`, `env`, `version` and `locks` only; options before the subcommand are
+    skipped. A bare `git lfs` and every other subcommand (`pull`, `fetch`, `push`, `checkout`, `install`, `track`,
+    `lock`, `unlock`, `prune`, `migrate` …) are refused."""
+    return _subcommand_after_options(args)[0] in _LFS_READ_SUBCOMMANDS
+
+
 def _reflog_reads_only(args: list[str]) -> bool:
     """True for every `reflog` form but `expire`, `delete`, `drop` and `write` as the first word that is no option;
     `expire` and `delete` as a dry run (_is_dry_run) read. Bare, `show`, `list`, `exists` and a ref name read."""
@@ -503,6 +525,8 @@ _READ_FORMS = {
     "sparse-checkout": _sparse_checkout_reads_only,
     "bisect": _bisect_reads_only,
     "rerere": _rerere_reads_only,
+    "submodule": _submodule_reads_only,
+    "lfs": _lfs_reads_only,
 }
 
 _WRITE_FORM_TEXT = {
@@ -525,6 +549,13 @@ _WRITE_FORM_TEXT = {
     "bisect": ("changes HEAD or the bisect state; a worker may read it with `git bisect log`, `visualize`, `terms` "
                "or `help`"),
     "rerere": "changes recorded resolutions; a worker may read them with `git rerere status`, `diff` or `remaining`",
+    "fetch": "fetches from a remote; the orchestrator provides a remote's state, not a worker",
+    "clone": "clones a remote; the orchestrator provides a remote's state, not a worker",
+    "backfill": "downloads objects from a remote; the orchestrator provides a remote's state, not a worker",
+    "submodule": ("fetches, changes or runs commands in submodules; a worker may read them with `git submodule`, "
+                  "`status` or `summary`"),
+    "lfs": ("downloads, changes or locks large files; a worker may read them with `git lfs ls-files`, `status`, "
+            "`env`, `version` or `locks`"),
 }
 
 
