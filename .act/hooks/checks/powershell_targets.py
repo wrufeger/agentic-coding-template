@@ -104,9 +104,22 @@
 #     target holding the command text, never as an empty answer.
 #   - with `broad=True` only (see _broad_guard_candidates; asked by check 1, checks/write_guard.py, and by
 #     checks/git_metadata_guard.py, which both get this one reading): additionally, every word of a
-#     Start-Process/Invoke-Command/python(3)/py invocation (their own write behaviour is opaque —
-#     this is a literal-text net, not a resolved target), every word after `& $sb`/`& { ... }`
-#     appearing anywhere in a statement, and every word to the right of `$var =`.
+#     Start-Process/Invoke-Command (and `saps`, `start`, `icm`)/python(3)/py invocation (their own write
+#     behaviour is opaque — this is a literal-text net, not a resolved target), every piece of the program text
+#     behind a code flag of perl/ruby that reads as a path (_inline_code_paths; the text is judged for what it
+#     names, not read as code), every word after `& $sb`/`& { ... }` appearing anywhere in a statement,
+#     and every word to the right of `$var =`.
+#   - `${C:\dir\file} = value` (one-letter drive in a braced variable name; also `+=`, a glued `=`) is a write to that
+#     file (_braced_drive_assignment_target); a drive made by New-PSDrive is not seen.
+#   - an alias a statement defines (`Set-Alias`/`sal`/`New-Alias`/`nal`) counts for the statements after it, in this
+#     scan only: not in a nested scan, not before the definition. One rule for every name: a statement whose command
+#     word has been given an alias is read as written and once with each value the name has had so far (_apply_ps_aliases:
+#     no value is replaced, an alias of an alias is followed for each of them), because the text does not show whether
+#     a definition takes effect (`-WhatIf`, a read-only or existing name, a definer another alias took over). Every
+#     consumer takes every reading: the write targets, a script piped into a shell, the inline interpreter code, the
+#     alias definitions, the directory moves (the tracked directories are the union of what the readings lead to)
+#     and the literal output that goes down a pipe. So a statement is never read for less than the committed reader
+#     read it for, and an alias that shadows a writer stays blocked. Each reading charges the budget.
 #   - the written-out form of a command (_ps_written_out: a read-only assignment as the call alone, `& $v ...`
 #     with `$v` set once to a literal as that call) is another text, not a reading of this scanner: check 1 alone
 #     asks for it, for every PowerShell command whose targets this scanner found (not for one it could not read),
@@ -115,8 +128,10 @@
 # Statement separators: `;`, `|`, a bare newline, `&&`/`||` (PS 7) — see _ps_tokens.
 # Quoting: '...' verbatim except '' -> a literal '; "..." with a backtick as the escape character
 # and "" -> a literal " (both PowerShell rules); a backtick followed by a newline is a line
-# continuation (dropped, not a separator); an unquoted "#" starts a comment to the end of the
-# line (PowerShell has no Bash-style "start of word" restriction on it); @'...'@ / @"..."@
+# continuation (dropped, not a separator); a "#" at the start of a word starts a comment to the end of the
+# line (a "#" inside a word, `a#b`, is part of it), `<# ... #>` at the start of a word is a block comment (never
+# closed: the command is not evaluable, None); a carriage return alone is a line break like a line feed; the
+# typographic quotes (_PS_SINGLE_QUOTES, _PS_DOUBLE_QUOTES) open and close a string like ' and "; @'...'@ / @"..."@
 # here-strings become a single opaque word each — their content is never scanned as commands or
 # redirections and never enters a `broad` candidate either (see _is_here_string_word), which is
 # also why `> .act/x` written *inside* a here-string body is not read as a redirection or a write.
@@ -212,6 +227,12 @@ _PS_OPERATORS_LEN2 = (">>", "&&", "||")      # ungated
 _PS_OPERATORS_LEN2_GATED = ("*>", "2>")      # gated
 _PS_OPERATORS_LEN1 = (">", "|", ";")         # ungated
 _PS_REDIRECT_OPS = frozenset({">", ">>", "*>", "*>>", "2>", "2>>"})
+# The quote characters PowerShell reads as a single or a double quote: the ASCII one and the typographic ones
+# (U+2018 to U+201B and U+201C to U+201E). A string opens and closes with any of its class; inside a string of one
+# class the other class is plain text.
+_PS_SINGLE_QUOTES = "'‘’‚‛"
+_PS_DOUBLE_QUOTES = '"“”„'
+_PS_LINE_END_RE = re.compile(r"[\r\n]")  # a line comment ends at the first of these
 
 # Flags whose next word (space or ":" form) is a value, never a switch — see _ps_split_args.
 # 2026-09-23 review (BLOCK): a flag missing here shifts every later positional by one, which can
@@ -328,8 +349,11 @@ _FLAG_ONLY_KEYS = {
 # check 1 only (`broad`): a call to one of these is opaque — its own write behaviour cannot be
 # read from its arguments — so every argument word is added as a raw literal-text candidate
 # instead of a resolved target (2026-09-23 review: Start-Process/Invoke-Command each carry a
-# string/script-block argument that is itself effectively a second command line).
-_GUARD_OPAQUE_ALL_ARGS = frozenset({"start-process", "invoke-command"})
+# string/script-block argument that is itself effectively a second command line). The aliases `saps`, `start` and
+# `icm` act like their cmdlets. The program text behind a code flag of Perl and Ruby (`-e`, _inline_code_values)
+# gives the pieces that read as a path (_inline_code_paths); their file operands have their own reading
+# (_perl_inplace_targets).
+_GUARD_OPAQUE_ALL_ARGS = frozenset({"start-process", "saps", "start", "invoke-command", "icm"})
 # check 1 only (`broad`): narrower than the above — only the value of an actual `-c` flag is
 # opaque-scanned, not every argument, so `python some_script.py` (the script's own writes are
 # invisible here regardless, same as any external program — see the module docstring's known
@@ -595,6 +619,20 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
     """Tokenize a PowerShell command into (text, is_operator) pairs. None if a quote or a
     here-string is never closed — the command is then not safely evaluable (see the module
     docstring's None contract). The text of a word is a _RawWord: a str that also carries the word as written."""
+    return _ps_tokens_as(command, True)
+
+
+def _ps_tokens_plain(command: str) -> Optional[list[_Token]]:
+    """The reading _ps_tokens had before it read typographic quotes, `<# #>` and a lone carriage return as
+    PowerShell does: those are plain text here, any `#` starts a comment. Only _ps_word_lists asks for it, so that a
+    text that is not PowerShell (the text behind `bash -c`, `cmd /c`) keeps every word it ever gave."""
+    return _ps_tokens_as(command, False)
+
+
+def _ps_tokens_as(command: str, powershell: bool) -> Optional[list[_Token]]:
+    """_ps_tokens (`powershell` True) or _ps_tokens_plain (False)."""
+    singles = _PS_SINGLE_QUOTES if powershell else "'"
+    doubles = _PS_DOUBLE_QUOTES if powershell else '"'
     tokens: list[_Token] = []
     word: list[str] = []
     i = 0
@@ -622,13 +660,13 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
             word.append(command[i + 1])
             i += 2
             continue
-        if ch == "'":
+        if ch in singles:
             j = i + 1
             buf: list[str] = []
             closed = False
             while j < n:
-                if command[j] == "'":
-                    if j + 1 < n and command[j + 1] == "'":
+                if command[j] in singles:
+                    if j + 1 < n and command[j + 1] in singles:
                         buf.append("'")
                         j += 2
                         continue
@@ -642,7 +680,7 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
             word.append("".join(buf))
             i = j
             continue
-        if ch == '"':
+        if ch in doubles:
             j = i + 1
             buf = []
             closed = False
@@ -652,8 +690,8 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
                     buf.append(command[j + 1])
                     j += 2
                     continue
-                if c == '"':
-                    if j + 1 < n and command[j + 1] == '"':
+                if c in doubles:
+                    if j + 1 < n and command[j + 1] in doubles:
                         buf.append('"')
                         j += 2
                         continue
@@ -678,16 +716,36 @@ def _ps_tokens(command: str) -> Optional[list[_Token]]:
                 # looked like an opener but never closed -> unsafe, see _consume_here_string
                 return None
             # else: no newline anywhere left -> not actually an opener, ordinary "@" character
-        if ch == "#":
+        if powershell and ch == "<" and not word and command.startswith("<#", i):
+            # A block comment (`<# ... #>`) starts at the start of a word and may sit in front of a command. One that
+            # is never closed is read like an unterminated quote: the command cannot be told apart safely.
+            closer = command.find("#>", i + 2)
+            if closer == -1:
+                return None
+            i = closer + 2
+            continue
+        if ch == "#" and (not word or not powershell):
+            # A `#` starts a line comment only at the start of a word (`a#b` is one word); the line ends at a line
+            # feed or at a carriage return alone, which PowerShell reads as a line break too. The plain reading
+            # ends a comment at a line feed only and starts one inside a word as well.
             flush()
-            newline = command.find("\n", i)
-            i = newline if newline != -1 else n
+            if powershell:
+                line_end = _PS_LINE_END_RE.search(command, i)
+                i = line_end.start() if line_end else n
+            else:
+                feed = command.find("\n", i)
+                i = feed if feed != -1 else n
             continue
         if ch in " \t":
             flush()
             i += 1
             continue
         if ch == "\r":
+            if not powershell or (i + 1 < n and command[i + 1] == "\n"):
+                i += 1  # CR LF: the line feed ends the line (the plain reading drops every carriage return)
+                continue
+            flush()  # a carriage return alone is a line break to PowerShell
+            tokens.append(("\n", True))
             i += 1
             continue
         if ch == "\n":
@@ -898,6 +956,32 @@ def _extract_dash_c(args: list[str]) -> Optional[str]:
     return None
 
 
+_PS_CODE_FLAG_RE = re.compile(r"^-[A-Za-z0-9]*[eE]$")
+
+
+def _inline_code_values(args: list[str]) -> list[str]:
+    """The words behind the code flags of a perl/ruby call (`-e`, `-E`, `-ne`, `-pe` ...: a flag that ends in `e`),
+    the program text the call runs; the only words of such a call that are no file operands."""
+    return [args[index + 1] for index, arg in enumerate(args[:-1]) if _PS_CODE_FLAG_RE.match(arg)]
+
+
+# Where the text of a perl/ruby program is cut into pieces: blanks, quotes, brackets and the characters that join
+# or end a statement or an argument, so that `open(F,">.act/x")` leaves `.act/x`. `$`, a backtick, `{`, `}` and `~`
+# stay in a piece: such a piece is a dynamic target, judged by its text.
+_PS_CODE_CUT_RE = re.compile(r"""[\s'"()<>|;,=&\[\]]+""")
+
+
+def _inline_code_paths(code: str) -> list[str]:
+    """The pieces of the program text `code` of a perl/ruby call that read as a path (_PS_CODE_CUT_RE cuts it; a
+    piece with a slash or a backslash in it, or one that starts with a dot) - the text is judged for what it names,
+    as neither language is read for what its calls do: `File.write('.act/x','y')` names `.act/x`, `puts 1` names
+    nothing."""
+    return [
+        piece for piece in _PS_CODE_CUT_RE.split(code)
+        if piece and ("/" in piece or "\\" in piece or piece.startswith("."))
+    ]
+
+
 def _extract_ps_command_flag(args: list[str]) -> Optional[str]:
     """pwsh/powershell(.exe) `-c`/`-Command <script>` — the script string, or None."""
     for index, arg in enumerate(args):
@@ -910,8 +994,29 @@ def _ps_word_lists(command: str, depth: int = 0) -> list[list[str]]:
     """The simple commands of a PowerShell command line as word lists, read with PowerShell's own
     tokenizer (a backslash is a path separator there, not an escape), including the text behind a
     nested `pwsh -Command`; empty when the line cannot be tokenized (an unterminated quote). A crash of
-    the tokenizer is not caught here: check_secret_read refuses the call for it."""
-    tokens = _ps_tokens(command)
+    the tokenizer is not caught here: check_secret_read refuses the call for it. Eight checks read the text behind
+    `bash -c` or `cmd /c` with this reader too, text that is no PowerShell: a command that holds a character
+    the two readings treat differently (_PS_READS_DIFFERENTLY_RE: a typographic quote, `#`, a carriage return) is
+    read both ways (_ps_tokens, then _ps_tokens_plain) and the lists of the second reading that the first one did
+    not give are added, so that no caller gets fewer words than the plain reading alone gave."""
+    lists = _ps_word_lists_of(_ps_tokens(command), depth)
+    if _PS_READS_DIFFERENTLY_RE.search(command):
+        known = {tuple(words) for words in lists}
+        for words in _ps_word_lists_of(_ps_tokens_plain(command), depth):
+            if tuple(words) not in known:
+                known.add(tuple(words))
+                lists.append(words)
+    return lists
+
+
+# What the two readings of a command (_ps_tokens and _ps_tokens_plain) treat differently: a typographic quote, a `#`
+# (a comment start inside a word, `<#`) and a carriage return.
+_PS_READS_DIFFERENTLY_RE = re.compile("[‘’‚‛“”„#\r]")
+
+
+def _ps_word_lists_of(tokens: Optional[list[_Token]], depth: int) -> list[list[str]]:
+    """The word lists of tokens (_ps_word_lists): one per simple command, the text behind a nested `-Command`
+    read on its own; empty for None."""
     if tokens is None:
         return []
     lists: list[list[str]] = []
@@ -953,12 +1058,17 @@ def _strip_literal_call(words: list[str]) -> list[str]:
     removed by the tokenizer). A dynamic program (`& $var`, `& (expr)`, `& { ... }`, `& @splat`, any
     word containing `$`) is left alone, so the caller still treats it
     as an opaque call; the statement's arguments are then checked like those of a direct call."""
-    if len(words) < 2 or words[0] != "&":
-        return words
-    program = words[1]
-    if not program or program[0] in "({@$&-" or "$" in program or "(" in program or program in ("{", "}"):
+    if len(words) < 2 or words[0] != "&" or not _is_literal_program(words[1]):
         return words
     return words[1:]
+
+
+def _is_literal_program(program: str) -> bool:
+    """The word behind a call operator names a program or a path (_strip_literal_call), not a variable, an
+    expression, a script block or a splat."""
+    return not (
+        not program or program[0] in "({@$&-" or "$" in program or "(" in program or program in ("{", "}")
+    )
 
 
 # `$name = <program> args...` with one of these programs is read as the call `<program> args...` alone by the
@@ -1090,6 +1200,9 @@ def _broad_guard_candidates(words: list[str]) -> list[str]:
             value = _extract_dash_c(effective[1:])
             if value is not None:
                 candidates.append(value)
+        elif kind == "perl_inplace":
+            for code in _inline_code_values(effective[1:]):
+                candidates.extend(_inline_code_paths(code))
         elif kind is not None and kind not in _BROAD_SKIP_KINDS:
             positionals, values = _ps_split_args(effective[1:])
             excluded = _BROAD_EXCLUDE_VALUE_FLAGS.get(name, frozenset())
@@ -1448,6 +1561,44 @@ def _follow_cd(statement: list[str], tracked: _TrackedDirs) -> Optional[_Tracked
     return tracked.moved_to(followed, possible, confirmed)
 
 
+# `${C:\dir\file} = value`: a variable named like a path on a one-letter drive. An assignment to a name with a
+# provider drive writes to the provider (the file here), as `$env:X = 1` sets an environment variable; the drive part
+# is read as a path. Only one-letter drives count: `${env:X}` and `${function:f}` name other providers, and a drive
+# made by New-PSDrive is not seen. The type literal in front (`[string]`) is allowed, and the operator may be glued to
+# the name (`${C:\f}='x'`, `${C:\f}+='x'`).
+_PS_BRACED_DRIVE_RE = re.compile(
+    r"^(?:\[[\w.]+\])?\$\{([A-Za-z]):([^}]+)\}((?:[-+*/%]?=(?!=)).*)?$", re.DOTALL
+)
+_PS_ASSIGN_OPERATORS = frozenset({"=", "+=", "-=", "*=", "/=", "%="})
+
+
+def _braced_drive_assignment_target(words: list[str]) -> Optional[str]:
+    """The path a statement `${X:path} = value` (also `+=` and the other assignment operators, a glued operator, a
+    type literal in front, any `$name =` in front of it) assigns to, as `X:path`; None for anything else. The name
+    is one word unless it holds a space, then the words up to the one that closes the brace are joined (blanks
+    collapse to one). A name that is only read (`Write-Output ${C:\\f}`) is no assignment."""
+    index = 0
+    while len(words) - index >= 3 and words[index + 1] == "=" and _PS_ASSIGN_VAR_RE.match(words[index]):
+        index += 2
+    if index >= len(words):
+        return None
+    head = words[index]
+    end = index + 1
+    if "${" in head and "}" not in head:
+        # The end is looked for first and the name joined once: joining word by word copies the text again with every
+        # word (a name that is never closed, followed by many words, would cost time quadratic in its length).
+        while end < len(words) and "}" not in words[end]:
+            end += 1
+        end = min(end + 1, len(words))
+        head = " ".join(words[index:end])
+    match = _PS_BRACED_DRIVE_RE.match(head)
+    if match is None:
+        return None
+    if match.group(3) is None and not (end < len(words) and words[end] in _PS_ASSIGN_OPERATORS):
+        return None
+    return f"{match.group(1)}:{match.group(2)}"
+
+
 def _flush_ps_statement(
     words: list[str], redirect_targets: list[str], tracked: _TrackedDirs, base_cwd: str,
     git_writes: frozenset, result: set[str], broad: bool, depth: int, creation_certain: bool = False,
@@ -1463,6 +1614,11 @@ def _flush_ps_statement(
     cwds = tracked.possible
     for raw in redirect_targets:
         resolved_targets = _resolve_ps_targets(raw, tracked)
+        result.update(resolved_targets)
+        tracked.note_filed(resolved_targets)
+    braced = _braced_drive_assignment_target(words)
+    if braced is not None:
+        resolved_targets = _resolve_ps_targets(braced, tracked)
         result.update(resolved_targets)
         tracked.note_filed(resolved_targets)
     words, assigned_candidates = _strip_program_assignment(_strip_literal_call(words))
@@ -1539,6 +1695,107 @@ def _flush_ps_statement(
         result.update(_resolve_ps_targets(raw, tracked))
 
 
+# The commands that define an alias (`Set-Alias cat Set-Content`).
+_PS_ALIAS_DEFINERS = frozenset({"set-alias", "sal", "new-alias", "nal"})
+# The parameters of those commands that take a value; every other `-Flag` is a switch.
+_PS_ALIAS_PARAMETERS = ("name", "value", "scope", "option", "description")
+
+def _ps_head_index(words: list[str], budget: _ScanBudget) -> int:
+    """The index of the word that names the command of a statement: the first word, or the one behind a call
+    operator in front of a literal program (_is_literal_program) and behind any `$name =` assignments, each of
+    those steps charged to `budget`. Past the end of `words` when there is none."""
+    index = 0
+    count = len(words)
+    while True:
+        if index + 1 < count and words[index] == "&" and _is_literal_program(words[index + 1]):
+            return index + 1
+        if count - index >= 3 and words[index + 1] == "=" and _PS_ASSIGN_VAR_RE.match(words[index]):
+            budget.charge()
+            index += 2
+            continue
+        return index
+
+
+def _ps_alias_definition(words: list[str], budget: _ScanBudget) -> Optional[tuple[str, str]]:
+    """(alias name, value) of a statement `Set-Alias|sal|New-Alias|nal [-Name] <name> [-Value] <value> [switches]`,
+    in lower case for the name; None for any other statement, and for a name or value that holds no literal command
+    word (a variable, an expression, a path)."""
+    index = _ps_head_index(words, budget)
+    if index >= len(words) or _ps_command_name(words[index]) not in _PS_ALIAS_DEFINERS:
+        return None
+    named: dict[str, str] = {}
+    positionals: list[str] = []
+    args = words[index + 1:]
+    position = 0
+    while position < len(args):
+        arg = args[position]
+        position += 1
+        if not (arg.startswith("-") and len(arg) > 1):
+            positionals.append(arg)
+            continue
+        key, colon, value = arg[1:].partition(":")
+        parameter = next((p for p in _PS_ALIAS_PARAMETERS if key and p.startswith(key.lower())), None)
+        if parameter is None:
+            continue  # a switch (-Force, -PassThru, -WhatIf ...)
+        if not colon and position < len(args):
+            value = args[position]
+            position += 1
+        named.setdefault(parameter, value)
+    positionals.reverse()
+    name = named.get("name") or (positionals.pop() if positionals else "")
+    value = named.get("value") or (positionals.pop() if positionals else "")
+    if not name or not value:
+        return None
+    if any(char in name for char in "/\\$(){}*?[]") or any(char in value for char in "$(){}*?[]"):
+        return None
+    return name.lower(), str(value)
+
+
+def _apply_ps_aliases(
+    words: list[str], aliases: dict[str, dict[str, str]], budget: _ScanBudget
+) -> list[list[str]]:
+    """Every reading of a statement: `words` as written, first, and once with each value an alias defined earlier
+    in the same command has stood for at the command word (`Set-Alias cat Set-Content`, then `cat .act/x y` is
+    also read as `Set-Content .act/x y`), also behind a call operator and `$name =`. `aliases` holds every value a
+    name was given, none replaced: a definition may not take effect (`-WhatIf`, a name that exists and is
+    read-only, a later `New-Alias` of a name that is taken), and the text does not show which. An alias of an alias
+    is followed, for each of its values; a loop adds nothing. Each value charges `budget`. `[words]` when no alias
+    applies. Every consumer of the statement takes every reading, so what the name as written does is never hidden
+    by an alias."""
+    if not aliases or not words:
+        return [words]
+    index = _ps_head_index(words, budget)
+    if index >= len(words) or "/" in words[index] or "\\" in words[index]:
+        return [words]
+    readings = [words]
+    seen = {words[index].lower()}
+    pending = [words[index].lower()]
+    while pending:
+        for key, value in aliases.get(pending.pop(), {}).items():
+            budget.charge(1 + len(words) // 50)  # a reading copies the words
+            if key not in seen:
+                seen.add(key)
+                pending.append(key)
+                readings.append([*words[:index], value, *words[index + 1:]])
+    return readings
+
+
+def _merge_moves(stays: _TrackedDirs, moves: list[_TrackedDirs], readings: int) -> _TrackedDirs:
+    """The directories the shell may be in after a statement that has several readings (_apply_ps_aliases), where
+    `moves` are the states the readings that move it lead to (_follow_cd) and `stays` the state before it: the
+    union of them, and the state before it as well when a reading does not move at all. The followed directory is
+    that of the first reading that moves."""
+    states = [*moves, stays] if len(moves) < readings else moves
+    if len(states) == 1:
+        return states[0]
+    base = next((state for state in states if state.capped), states[0])
+    return base.moved_to(
+        moves[0].followed,
+        frozenset().union(*(state.possible for state in states)),
+        frozenset().union(*(state.confirmed for state in states)),
+    )
+
+
 def _scan_ps_tokens(
     tokens: list[_Token], base_cwd: str, git_writes: frozenset, broad: bool, depth: int,
     start: Optional[_TrackedDirs] = None, inline: Optional[_InlineSink] = None,
@@ -1546,12 +1803,16 @@ def _scan_ps_tokens(
     """The write targets of a tokenized command, every statement read once against the directories the shell
     may be in (_follow_cd, from `start` or `base_cwd` alone) — see _flush_ps_statement. With `inline`, the
     same walk also collects the path literals of inline interpreter code (_collect_ps_inline), so both
-    readings follow the directory changes the same way. Raises _ScanLimit once the scan's budget is used up."""
+    readings follow the directory changes the same way. An alias a statement defines (`Set-Alias cat
+    Set-Content`) counts for the statements after it in this scan only (_apply_ps_aliases): not for a nested
+    scan, and not for one before it. Raises _ScanLimit once the scan's budget is used up."""
     result: set[str] = set()
     tracked = start if start is not None else _TrackedDirs.start(base_cwd)
+    # lower-cased alias name -> every value it has been given in this scan, by lower-cased value
+    aliases: dict[str, dict[str, str]] = {}
     words: list[str] = []
     redirect_targets: list[str] = []
-    piped: Optional[str] = None  # the literal text the previous stage of a pipeline sends down
+    piped: list[str] = []  # the literal texts the previous stage of a pipeline sends down, one per reading
     # A directory-creating statement is certain to run (and so to have made its directory) when it starts the
     # command or follows `;` or a line break, at the top level, in a command without a script block or a
     # construct whose body may not run.
@@ -1575,27 +1836,46 @@ def _scan_ps_tokens(
             else:
                 index += 1
             continue
-        produced: Optional[str] = None
+        produced: list[str] = []
         if words or redirect_targets:
             tracked.budget.charge()
-            statement = _strip_literal_call(words)
-            if piped is not None:
-                result.update(_piped_script_targets(piped, statement, tracked, base_cwd, git_writes, broad, depth))
-            _flush_ps_statement(
-                words, redirect_targets, tracked, base_cwd, git_writes, result, broad, depth,
-                creation_stream_ok and previous_op in (None, ";", "\n"),
-            )
-            if inline is not None and statement:
-                _collect_ps_inline(statement, piped, tracked, inline)
-            moved = _follow_cd(_strip_program_assignment(statement)[0], tracked)
-            if moved is not None:
-                tracked = moved
-            produced = _ps_literal_output(statement)
+            # One rule for an alias: the statement is read as written and once with every value its command word has
+            # had as an alias (_apply_ps_aliases), and every consumer takes every reading, so no definition that
+            # fails or does not apply, and no later one, hides what the name as written does.
+            readings = _apply_ps_aliases(words, aliases, tracked.budget)
+            certain = creation_stream_ok and previous_op in (None, ";", "\n") and len(readings) == 1
+            moves: list[_TrackedDirs] = []
+            defined: list[tuple[str, str]] = []
+            for number, reading in enumerate(readings):
+                if number:
+                    tracked.budget.charge()
+                statement = _strip_literal_call(reading)
+                for text_piped in piped:
+                    result.update(_piped_script_targets(
+                        text_piped, statement, tracked, base_cwd, git_writes, broad, depth))
+                _flush_ps_statement(
+                    reading, redirect_targets, tracked, base_cwd, git_writes, result, broad, depth, certain,
+                )
+                if inline is not None and statement:
+                    _collect_ps_inline(statement, piped, tracked, inline)
+                moved = _follow_cd(_strip_program_assignment(statement)[0], tracked)
+                if moved is not None:
+                    moves.append(moved)
+                definition = _ps_alias_definition(reading, tracked.budget)
+                if definition is not None:
+                    defined.append(definition)
+                literal = _ps_literal_output(statement)
+                if literal is not None and literal not in produced:
+                    produced.append(literal)
+            if moves:
+                tracked = _merge_moves(tracked, moves, len(readings))
+            for alias_name, alias_value in defined:
+                aliases.setdefault(alias_name, {}).setdefault(alias_value.lower(), alias_value)
             words = []
             redirect_targets = []
         if at_end:
             return result
-        piped = produced if text == "|" else None
+        piped = produced if text == "|" else []
         previous_op = text
         index += 1
 
@@ -1637,10 +1917,11 @@ def _ps_raw_redirect_targets(command: str) -> set[str]:
 
 
 def _collect_ps_inline(
-    statement: list[str], piped: Optional[str], tracked: _TrackedDirs, sink: _InlineSink
+    statement: list[str], piped: list[str], tracked: _TrackedDirs, sink: _InlineSink
 ) -> None:
     """The path literals of one statement's inline interpreter code (`python -c '<code>'`, `node -e "..."`, a
-    literal piped into `python -` / `python` / `node`), each once per directory the statement may run in
+    literal piped into `python -` / `python` / `node`, `piped` holding the literal each reading of the statement
+    before the pipe sends), each once per directory the statement may run in
     (`tracked.possible`), appended to `sink.found`; a relative one also as the target no check may place once
     a tracked directory was dropped at the cap. A failure of the reader is noted in `sink.failed` when the
     sink swallows (the walk goes on, the caller reports one dynamic target), else it propagates. A call can
@@ -1651,29 +1932,29 @@ def _collect_ps_inline(
         if language is None:
             continue
         kind, code = _inline_code.code_source(language, statement[start + 1:])
+        codes: list[str] = []
         if kind == _inline_code.SOURCE_STDIN:
-            code = piped if start == 0 else None
+            codes = list(piped) if start == 0 else []  # one text per reading of the statement before the pipe
         elif kind == _inline_code.SOURCE_CODE and code is not None:
-            code = _unwrap_here_string(code)
-        if kind == _inline_code.SOURCE_NONE or code is None:
-            continue
-        reader = _inline_code.write_targets
-        try:
-            if kind == _inline_code.SOURCE_CODE and (start > 0 or program != statement[0]):
-                paths = _read_with_glued_closers(reader, language, code)
-            else:
-                paths = list(reader(language, code))
-        except Exception:  # noqa: BLE001 - the fail-closed path: a crash of the reader ends as one dynamic target, never as an allow
-            if not sink.swallow:
-                raise
-            sink.failed = True
-            return
-        cwds = sorted(tracked.possible, key=lambda cwd: (cwd is None, cwd or ""))
-        for path in paths:
-            tracked.budget.charge()
-            sink.found.extend((path, cwd, language) for cwd in cwds)
-            if tracked.capped and not _is_dynamic_target(path) and not _is_absolute_target(path):
-                sink.found.append((_unplaced_target(_LOST_DIRECTORY), None, language))
+            codes = [_unwrap_here_string(code)]
+        for code in codes:
+            reader = _inline_code.write_targets
+            try:
+                if kind == _inline_code.SOURCE_CODE and (start > 0 or program != statement[0]):
+                    paths = _read_with_glued_closers(reader, language, code)
+                else:
+                    paths = list(reader(language, code))
+            except Exception:  # noqa: BLE001 - the fail-closed path: a crash of the reader ends as one dynamic target, never as an allow
+                if not sink.swallow:
+                    raise
+                sink.failed = True
+                return
+            cwds = sorted(tracked.possible, key=lambda cwd: (cwd is None, cwd or ""))
+            for path in paths:
+                tracked.budget.charge()
+                sink.found.extend((path, cwd, language) for cwd in cwds)
+                if tracked.capped and not _is_dynamic_target(path) and not _is_absolute_target(path):
+                    sink.found.append((_unplaced_target(_LOST_DIRECTORY), None, language))
 
 
 def _read_with_glued_closers(reader: Callable[[str, str], Iterable[str]], language: str, code: str) -> list[str]:
@@ -1879,7 +2160,8 @@ _PS_WRITTEN_OUT_OFF_RE = re.compile(
     r"|variable|executioncontext|sessionstate|scriptblock|\.value|\.ps1|env:path",
     re.IGNORECASE,
 )
-# Quote characters PowerShell accepts next to `'` and `"` (U+2018 to U+201E); the tokenizer knows the two only.
+# Quote characters PowerShell accepts next to `'` and `"` (U+2018 to U+201E). The tokenizer reads them as quotes too
+# (_PS_SINGLE_QUOTES, _PS_DOUBLE_QUOTES); a command that holds one still gets no written-out form below.
 _PS_TYPOGRAPHIC_QUOTES = "‘’‚‛“”„"
 _PS_LONE_CR_RE = re.compile(r"\r(?!\n)")
 _PS_STATEMENT_SEPARATORS = frozenset({";", "\n", "|", "&&", "||"})

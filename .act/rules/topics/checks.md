@@ -701,6 +701,35 @@ diff-files|whatchanged|stash show` without `-o` or an option starting with `--ou
 and `$x = py x.py, '.act/x'` are judged as before. Any other right side (a cmdlet such as `Join-Path`, a
 string, an expression, the call operator) is read as before.
 
+The PowerShell reader cuts a command into words the way PowerShell does, as far as the text shows it: a `#` starts a
+comment only at the start of a word (`a#b` is one word), a block comment `<# ... #>` is skipped (one that is never
+closed counts like an open quote: the command cannot be told apart, and with `.act/` in its text it is refused), a
+carriage return alone is a line break, and the typographic quotes (U+2018 to U+201E) open and close a string like
+`'` and `"`; inside a string the quotes of the other kind are plain text. `${C:\dir\file} = value` (also `+=`, a glued
+`=`, a type literal in front) writes the file on a drive of one letter and counts as a write to it; `$env:X`,
+`${env:X}` and `$function:f` are no files. An alias that a statement defines (`Set-Alias`, `sal`, `New-Alias`,
+`nal`, also with `-Name`/`-Value`) counts for the statements after it, behind `$x =` and `&` too, by one rule for
+every name: a statement whose command word has been given an alias is read as written and once with each value the
+name has had so far in the command (none is replaced; an alias of an alias is followed for each value). The text does
+not show whether a definition takes effect (`-WhatIf`, `sl` and other read-only names, a name that exists, a definer
+that another alias took over), so each reading counts, for the write targets, a script piped into a shell, inline
+interpreter code, further definitions, directory moves (the directories the shell may be in are the union of what the
+readings lead to) and the literal text piped on. What a command is refused for as written stays refused:
+`Set-Alias Set-Content Get-Content; Set-Content .act/x y`, `Set-Alias git Get-Content -WhatIf; git rm .act/x`,
+`New-Alias cd Get-Content; cd .act; Set-Content x y`, `Set-Alias cat Set-Content; New-Alias cat Get-Content; cat .act/x
+y`; so is a call of the value (`Set-Alias cat Set-Content; cat .act/x y`, `Set-Alias git Set-Content; git .act/x y`),
+while `Set-Alias ll Get-ChildItem; ll .act` and a call before the definition stay free. A large or branching set of
+aliases ends in the scan's budget (the command is then the one target no check may place). `saps`, `start` and `icm`
+are read like `Start-Process` and `Invoke-Command`. The program text behind a code flag of `perl` or `ruby` (`-e`,
+`-ne` ...) is judged by its path-like pieces (those with a `/` or `\` or starting with `.`), each a possible target
+like any other path, for `write-guard` and for `git-metadata-guard` alike: `ruby -e "File.write('.act/x','y')"` is
+refused, `perl -ne "print" .act/hooks/a.py` is free, and so is a program that names no path; for
+`git-metadata-guard`, `perl -e 'print ".git/config"'` is refused as well (the text is judged, not what the code does;
+code glued to the flag, `perl -e'...'`, is not read). Limits: a drive made with `New-PSDrive` is not seen (a name with
+its letter is read as that drive letter); an alias counts within the same command only, from the statement that
+defines it on: an alias defined inside a script block, and a nested `pwsh -c` (it starts without the aliases of the
+text around it) do not see it.
+
 Inline interpreter code is read too, for a worker with a restricted scope (`none` or patterns; a worker
 without a `Write scope:` line and the orchestrator are not affected). A Bash or PowerShell call that runs
 `python`, `python3`, `python3.N`, `pythonw`, `py` (also `py -3`) or `node` (an `.exe` suffix and a

@@ -38,8 +38,15 @@ false alarms and a truer `update.py --plan`.
   package settings block stays) and names a value other than `local`; `012` only offers the package.
 - When the context-size hint cannot save its state (`.act-local` is a link or leaves the project), it says so in
   one clause, since it then repeats on every prompt; other projects see no change.
+- The reply to `idea:` names the kind the whiteboard reads from the heading (`Note:`, `Bug:`, `Reminder <date>:` …)
+  and what follows, e.g. that the session start will not report a note; a plain idea is answered as before.
+- Migration `009-whiteboard` names an old override `docs/ai/local/skeleton/concept/README.md` that has no counterpart
+  at `docs/ai/local/skeleton/README.md` and tells you to move it by hand; nothing is moved.
 
 ### Fixed
+- When a migration fails after it changed files, the update names those paths and keeps them in
+  `.act-local/migration-<id>-paths.json`; the next update commits them with the migration, and a path a migration
+  forgot to return is committed too.
 - `act-doctor` no longer reports `docs-link-dead` for a backtick path `docs/project/….md` that follows an example hint
   (`e.g.`, `z. B.`, `for example`, `zum Beispiel`) in the same sentence; Markdown link targets stay checked.
 - `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker; `apply`
@@ -49,6 +56,15 @@ false alarms and a truer `update.py --plan`.
 - `worker-git-write` also refuses a worker's writing forms of `gc`, `prune`, `repack`, `notes`, `remote`, `reflog`,
   `worktree`, `history`, `hash-object -w` and more; reading forms (`notes list`, `remote -v`, `prune --dry-run`) stay
   free.
+- The PowerShell reader of the write checks splits words like PowerShell: `a#b` is one word, a `<# #>` block comment,
+  a lone carriage return and typographic quotes no longer hide a write behind them; `'a#b'` and `echo a #c` stay free.
+- A PowerShell assignment to a variable named like a file, `${C:\dir\file} = x` (also `+=`), counts as a write to that
+  file; `$env:X`, `${env:X}` and `$function:f` stay free. A drive made by `New-PSDrive` is not seen.
+- An alias set earlier in the same PowerShell command (`Set-Alias cat Set-Content; cat .act/x y`) counts: a call is
+  read as written and with every value its name had, so a failing or shadowing definition hides nothing. `pwsh -c`
+  has none.
+- PowerShell `saps`, `start` and `icm` are read like `Start-Process` and `Invoke-Command`. The path-like pieces of
+  `perl|ruby -e` code count for write_guard and git_metadata_guard: `perl -e 'print ".git/config"'` is refused too.
 
 ## [2.7.0] - 2026-11-25
 

@@ -3196,10 +3196,92 @@ def _due_migrations_note(migrations_dir: Path) -> str:
     return f" ({len(due)} migration(s) due, listed above)"
 
 
-def step_migrate(root: Path, plan: bool, first: bool = False) -> tuple[str, list[str], list[Path]]:
+def _migration_leftover_file(root: Path, stem: str) -> Path:
+    return root / ".act-local" / f"migration-{stem}-paths.json"
+
+
+def _status_snapshot(root: Path, held: frozenset[str]) -> Optional[dict[str, str]]:
+    """The project's `git status` as {path: XY code}, minus the owner's held-back files; None when git cannot
+    say (no repository, no git): a migration then runs without the record."""
+    try:
+        result = actlib.git_run(
+            root, ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], text=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    snapshot: dict[str, str] = {}
+    for entry in result.stdout.split(b"\0"):
+        if len(entry) < 4:
+            continue
+        rel = entry[3:].decode("utf-8", errors="surrogateescape")
+        if rel not in held:
+            snapshot[rel] = entry[:2].decode("ascii", errors="replace")
+    return snapshot
+
+
+def _paths_changed_since(before: Optional[dict[str, str]], after: Optional[dict[str, str]]) -> list[str]:
+    """Paths that are new in `after` or carry another status code than in `before`."""
+    if before is None or after is None:
+        return []
+    return sorted(rel for rel, code in after.items() if before.get(rel) != code)
+
+
+def _read_migration_leftover(root: Path, stem: str) -> list[str]:
+    try:
+        data = json.loads(_migration_leftover_file(root, stem).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [rel for rel in data if isinstance(rel, str)] if isinstance(data, list) else []
+
+
+def _printable_path(rel: str) -> str:
+    """A path for a message: bytes that are not valid UTF-8 shown as escapes, never raising on output."""
+    return rel.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="backslashreplace")
+
+
+def _settle_migration_leftovers(root: Path, applied: list[str], no_commit: bool, notes: list[str]) -> None:
+    """Delete the paths files of migrations whose paths a commit has taken in. With `no_commit`, or when the
+    migration is not in this template any more, nothing will commit them: the paths go into `notes` (to commit by
+    hand) and the file is deleted all the same, since nothing reads it again. Best effort."""
+    folder = root / ".act-local"
+    try:
+        files = sorted(folder.glob("migration-*-paths.json"))
+    except OSError:
+        return
+    for file in files:
+        stem = file.name[len("migration-"):-len("-paths.json")]
+        gone = not (root / ".act" / "migrations" / f"{stem}.py").is_file()
+        if stem not in applied and not gone:
+            continue  # its migration is still to run: the next update commits the paths
+        if no_commit or gone:
+            paths = _read_migration_leftover(root, stem)
+            why = "this template has no such migration any more" if gone else "--no-commit"
+            if paths:
+                notes.append(f"migration {stem} had changed {len(paths)} path(s) in an aborted run ({why}); commit "
+                             f"them by hand: {', '.join(_printable_path(rel) for rel in paths[:10])}"
+                             + (f", … and {len(paths) - 10} more" if len(paths) > 10 else ""))
+        try:
+            file.unlink()
+        except OSError:
+            pass
+
+
+def step_migrate(root: Path, plan: bool, first: bool = False,
+                 held: frozenset[str] = frozenset()) -> tuple[str, list[str], list[Path]]:
     """Returns (summary, newly_applied_ids, touched_paths). With `first` only the due migrations that mark
     themselves `EARLY = True` run (the update does that before anything reads or writes the project's rule
-    files), and a run with none due says nothing (an empty summary); without it, the due ones that do not."""
+    files), and a run with none due says nothing (an empty summary); without it, the due ones that do not.
+
+    Before each `apply` the project's `git status` is recorded (minus `held`, the owner's files with
+    uncommitted changes); the paths that differ afterwards are added to the paths the migration returns. When
+    `apply` raises, those paths are written to `.act-local/migration-<id>-paths.json`, named in the error
+    and the exception goes on; the next update's run of that migration adds them to its commit paths, and
+    the caller deletes the file after the commit (`_settle_migration_leftovers`).
+    Covered: a raise inside `apply`. Not covered: a process killed without an exception (no handler runs, no
+    file is written); a path the owner's own work changed meanwhile counts as the migration's; a file that
+    was already changed before the record, in the same state, is not seen. EARLY migrations run before the
+    caller's held set is final (it may grow after them), so a file held back only later can be named here."""
     migrations_dir = root / ".act" / "migrations"
     if not migrations_dir.is_dir():
         return ("" if first else "no .act/migrations/ directory"), [], []
@@ -3230,9 +3312,35 @@ def step_migrate(root: Path, plan: bool, first: bool = False) -> tuple[str, list
             continue
         plan_description = module.plan(root) if hasattr(module, "plan") else ""
         print(f"[act]   {path.stem} --plan: {plan_description}")
-        result = module.apply(root)
+        carried = _read_migration_leftover(root, path.stem)  # paths an earlier, aborted run of it changed
+        before = _status_snapshot(root, held)
+        try:
+            result = module.apply(root)
+        except BaseException as exc:  # also a Ctrl-C or a migration's sys.exit: the paths are written first
+            changed = sorted(set(carried) | set(_paths_changed_since(before, _status_snapshot(root, held))))
+            if not changed:
+                raise
+            leftover = _migration_leftover_file(root, path.stem)
+            try:
+                leftover.parent.mkdir(parents=True, exist_ok=True)
+                # ASCII escapes: a path that is not valid UTF-8 (read back as lone surrogates) round-trips
+                leftover.write_text(json.dumps(changed), encoding="utf-8", newline="\n")
+                where = f"listed in {leftover.relative_to(root).as_posix()}, the next update commits them"
+            except (OSError, ValueError) as write_exc:
+                where = f"could not be listed in {leftover.name} ({write_exc.__class__.__name__}: {write_exc})"
+            shown = [_printable_path(rel) for rel in changed]
+            message = (
+                f"migration {path.stem} failed ({exc.__class__.__name__}: {exc}) after it changed "
+                f"{len(changed)} path(s), {where}: {', '.join(shown[:10])}"
+                + (f", … and {len(shown) - 10} more" if len(shown) > 10 else ""))
+            if not isinstance(exc, Exception):
+                print(f"[act] {message}", file=sys.stderr)
+                raise
+            raise RuntimeError(message) from exc
         description, touched_rel = result if isinstance(result, tuple) else (result, [])
-        touched.extend(root / rel for rel in touched_rel)
+        touched_rel = [*touched_rel, *carried,
+                       *_paths_changed_since(before, _status_snapshot(root, held))]
+        touched.extend(root / rel for rel in dict.fromkeys(touched_rel))
         newly_applied.append(path.stem)
         ran.append(f"{path.stem}: {description}")
         # Recorded right after each success, not once at the end — a later migration's failure
@@ -3759,7 +3867,7 @@ def _finish_update(
     old_rules_unsaved = _has_unsaved_changes(root, actlib.LEGACY_RULES_FILE)  # taken before the move below
     # A migration that marks itself `EARLY = True` (one that moves a file the steps below read or write) runs
     # before any of them: no step then sees the old place of the file, and none makes a second one beside it.
-    first_summary, _first_applied, first_touched = step_migrate(root, False, first=True)
+    first_summary, _first_applied, first_touched = step_migrate(root, False, first=True, held=held_unsaved)
     if old_rules_unsaved and (root / actlib.RULES_FILE).is_file() and not (root / actlib.LEGACY_RULES_FILE).is_file():
         # the owner's uncommitted rule file was moved: neither its deletion nor the new file goes into the commit
         held_unsaved = held_unsaved | {actlib.RULES_FILE, actlib.LEGACY_RULES_FILE}
@@ -3794,7 +3902,7 @@ def _finish_update(
     hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
     _print_step(7, hooks_gitfiles_summary)
 
-    migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
+    migrate_summary, newly_applied, migration_touched = step_migrate(root, False, held=held_unsaved)
     if first_summary:  # the ones that ran first are named here too, so step 8 tells every migration of this run
         migrate_summary = "; ".join(
             part for part in (first_summary, "" if migrate_summary == "no due migrations" else migrate_summary) if part)
@@ -3833,6 +3941,7 @@ def _finish_update(
         commit_paths.append(rescue_dir)
     commit_summary = step_commit(root, False, no_commit, commit_paths)
     print(f"[act]   commit: {commit_summary}")
+    _settle_migration_leftovers(root, [*_first_applied, *newly_applied], no_commit, notes)
 
     # A successful update makes any pending background-check result stale -- drop it
     # rather than let session.py's SessionStart hook report an "update available" the lock no

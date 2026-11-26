@@ -31,6 +31,13 @@ __all__ = ["parse_entries", "short_title", "capture"]
 
 _LINE_PREFIX_RE = re.compile(r"[ \t]*(todo|note|idea):[ \t]*", re.IGNORECASE)
 _TITLE_WIDTH = 60
+# what follows for a kind whiteboard.py detects from a heading; a plain idea needs no remark
+_KIND_FOLLOWS = {
+    "note": "the session start will not report it",
+    "bug": "the session start reports it as new",
+    "reminder": "the session start reports it on its date",
+    "event": "the session start lists it to check",
+}
 # Seconds to wait for entries.lock per entry: the hook's own limit is 10 s for the whole message.
 _LOCK_WAIT = 1.5
 _HELP_LINE = ("undo: delete the file (or section) and resend without the prefix; "
@@ -93,7 +100,13 @@ def capture(root: Path, payload: dict) -> Optional[str]:
                 body = "" if text.strip() == title else text
                 if kind == "idea":
                     path = whiteboard.append_section(root, title, body)
-                    lines.append(f"[act] captured idea -> {actlib.rel_posix(path, root)}")
+                    # the heading may open with a kind word (`Note: x`): whiteboard.py reads the kind from it
+                    detected, day = whiteboard.classify(title)
+                    follows = _KIND_FOLLOWS.get(detected, "")
+                    if detected == "reminder" and day is not None:
+                        follows = f"the session start reports it from {day.isoformat()}"
+                    suffix = f" (kind {detected}: {follows})" if follows else ""
+                    lines.append(f"[act] captured idea -> {actlib.rel_posix(path, root)}{suffix}")
                     continue
                 path, entry_id = entries.create_entry(
                     root, kind, title, recipient=identity, body=f"{body}\n" if body else "",

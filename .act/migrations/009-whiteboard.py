@@ -34,6 +34,9 @@
 #               docs/ai/inbox/ + docs/ai/proposals/ are replaced by the rows of .act/bridges/docs-readme.md when
 #               they stand word for word as the template wrote them (the date column aside); a changed row stays and
 #               is named.
+#            7. An old override docs/ai/local/skeleton/concept/README.md of the starting text, with no override at
+#               docs/ai/local/skeleton/README.md, is read nowhere now: it stays where it is and a `left` line names it
+#               and says to move it by hand (the text may have been written for the old folder).
 #          The way back is the update's own commit: `git revert <that commit>` restores every moved, archived and
 #          changed file and the old .act/; nothing is rewritten in place except the two rows of docs/README.md and the
 #          links of a moved concept page, so a hand-made way back is `git checkout <commit before the update> --
@@ -400,7 +403,21 @@ def plan(root: Path) -> str:
         parts.append(f"replace the template's two old rows in {DOCS_README}")
     if (root / "docs" / "ai").is_dir() and not (root / WHITEBOARD_DIR / "README.md").exists() and parts:
         parts.insert(0, f"create {WHITEBOARD_DIR}/README.md")
-    return "; ".join(parts) if parts else "nothing to do (no ideas files, no proposals folder)"
+    text = "; ".join(parts) if parts else "nothing to do (no ideas files, no proposals folder)"
+    old_override = _old_skeleton_override(root)
+    return f"{text}; left in place: {old_override}" if old_override else text
+
+
+OLD_SKELETON_README = "docs/ai/local/skeleton/concept/README.md"
+NEW_SKELETON_README = "docs/ai/local/skeleton/README.md"
+
+
+def _old_skeleton_override(root: Path) -> str:
+    """A line for the old starting text of the concepts folder when the project overrode it and has no override
+    at the new place; nothing is moved (the text may have been written for the old folder)."""
+    if (root / OLD_SKELETON_README).is_file() and not (root / NEW_SKELETON_README).exists():
+        return f"{OLD_SKELETON_README} (the old starting text override is read nowhere now; move it by hand to {NEW_SKELETON_README})"
+    return ""
 
 
 def _skeleton_readme(root: Path) -> Path | None:
@@ -603,6 +620,10 @@ def apply(root: Path) -> tuple[str, list[str]]:
         for first in changed:
             left.append(f"{DOCS_README}: the row for {first} was changed, so it stays - write the rows of "
                         "docs/ai/whiteboard-<identity>.md and docs/ai/inbox/ yourself")
+
+    old_override = _old_skeleton_override(root)
+    if old_override:
+        left.append(old_override)
 
     unique = sorted(dict.fromkeys(touched))
     description = "; ".join(done) if done else "nothing changed"
