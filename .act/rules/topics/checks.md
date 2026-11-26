@@ -334,7 +334,11 @@ Limits. The checks read the text of a call and run nothing: what a program or sc
 here-string) is read for literal paths and literal command lines, not for computed ones (a variable, an f-string).
 Code that becomes a script only when the command runs (`bash <<< '…'`, `source /dev/stdin`, `[scriptblock]::Create`)
 is not followed, and a target that depends on an earlier command is judged on what the text says — for every shell
-check that reads write targets. The checks are a guard rail against mistakes, not a wall against intent.
+check that reads write targets. An unquoted `$(…)` or `@(…)` in a call (`git -C $(pwd) commit`) is one word of that
+call with the words glued to it, a value no check can determine, and the commands inside it are read as commands of
+their own, in front of the call for `secret-scan` (a `cd` inside moves no directory outside it), behind it for the
+other checks; without a closing `)`, or with a `case` block inside that has no `esac`, the call is cut at the `$` as
+before. The checks are a guard rail against mistakes, not a wall against intent.
 
 ### The watcher after every call: `protected-watch`
 

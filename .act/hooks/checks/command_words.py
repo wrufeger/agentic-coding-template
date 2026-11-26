@@ -74,6 +74,24 @@
 #     makes this over-read, never under-read). A redirection in front of or inside the command
 #     (`> f rm -rf d`, `git 2>/dev/null commit`) is read twice: once with its operand among the words
 #     (how the lexer hands it back) and once with the operand left out, which is what bash runs.
+#   - an unquoted `$(...)` or `@(...)` is put back together before the words are grouped (_join_substitutions):
+#     the lexer reads `git -C $(pwd) commit` as `git -C $`, `(`, `pwd`, `)`, `commit`, where `(` and `)` would
+#     each cut a command, so it becomes the command `git -C $(pwd) commit` (the substitution a _JoinedWord: a
+#     value that cannot be determined, with the words glued to it on either side) and `pwd` read behind it as a
+#     command of its own. The words inside are the lexer's own tokens, read as before. Not joined, so read as
+#     before and cut at the `$`: a substitution without its closing parenthesis (or with a `case` block inside
+#     that has no `esac`), `$((`/`$[`, a `$` that is quoted or escaped and a `$` followed by a blank. A `case`
+#     block inside is counted for the forms below (_paren_matches), the parentheses of all substitutions in
+#     one pass: only a `case` where a command name stands opens one (`echo case` does not; where a command
+#     name stands: first in the substitution, behind a separator, a reserved word such as `then`, and the body
+#     of a function `f() {`, `f () {`, `function f {`, `function f() {`), up to the `esac` there, and the `)` of
+#     a pattern closes nothing. A case this count does not follow (a `case` after another construct) leaves
+#     the substitution unjoined or its `)` too early, as before. A
+#     joined word in the place of a command name is skipped like a word of backtick spans (_strip_command_prefix),
+#     so what follows it is still read as the command (`$(echo env) rm -rf d`). `<(...)`/`>(...)` stay as the
+#     lexer reads them. The commands inside stand behind the command around them, never between its words; so a
+#     script piped out of such a command (`echo 'git commit' $(true) | sh`) is not read, the stage before the pipe
+#     being the last command inside the substitution - the same gap as when the lexer cut the call at the `$`.
 #   - a write made from inside a program (`python -c "...git..."`, a script file) is invisible,
 #     same limit shell_targets.py's own docstring states for its write-target scan.
 #   - `find -exec ... {} \;` / `+`: the escaped `\;` form is recognized as shlex would hand it
@@ -105,12 +123,14 @@ from .shell_targets import (
     _ps_reads_stdin,
     _reads_script_from_stdin,
     _shell_tokens,
+    _Word,
 )
 
 __all__ = [
     "_PS_NAMES", "_SEGMENT_SPLIT_RE_FALLBACK", "_command_word_lists_new", "_command_word_lists",
     "_nested_word_lists", "_strip_command_prefix",
     "_stripped_word_lists", "_git_invocations_with_prefix", "_git_invocations",
+    "_JoinedWord", "_SubOpen", "_SubClose", "_join_substitutions",
 ]
 
 # Interpreter names this module recognizes for a `-c`/`-Command`/`/c` recursion, beyond the POSIX
@@ -144,8 +164,10 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
             index += 1
         elif word in _RESERVED_PREFIXES:
             index += 1
-        elif _is_span_word(word):
-            index += 1  # a word of backtick spans only: it prints nothing or something unknowable
+        elif _is_span_word(word) or isinstance(word, _JoinedWord):
+            # a word of backtick spans only, or one that holds an unquoted `$(...)`: it prints nothing or
+            # something unknowable, and what follows may be the command (`$(echo env) rm -rf d`)
+            index += 1
         elif _command_name(word) in _WRAPPER_COMMANDS:
             wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(_command_name(word), frozenset())
             index += 1
@@ -153,7 +175,10 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
                 arg = words[index]
                 if arg in wrapper_value_flags:
                     index += 2 if index + 1 < len(words) else 1
-                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg):
+                elif (
+                    _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg)
+                    or isinstance(arg, _JoinedWord)
+                ):
                     index += 1
                 else:
                     break
@@ -331,6 +356,279 @@ def _piped_script_texts(previous: list[str], words: list[str]) -> list[str]:
     return [text] if text else []
 
 
+class _JoinedWord(_Word):
+    """A word the lexer cut into pieces at an unquoted `$(...)` or `@(...)`, put back together
+    (_join_substitutions): the dollar sign or at sign with the parenthesis behind it, what the substitution
+    shows (its words, blanks between them) and the closing parenthesis, with the words glued to it on either
+    side. Its text shows the substitution, so it is a value no check can determine (a `$` stands in it).
+    `parts` are the lexer's words it is made of, the ones the substitution is not in: a `"$(...)"` among them
+    is still read as a nested command, the substitution of the joined word itself is not (its commands are
+    read from the lexer's own tokens)."""
+
+    parts: tuple
+
+    def __new__(
+        cls, text: str, subs: tuple, bare: str, live: str, parts: tuple,
+    ) -> "_JoinedWord":
+        word = super().__new__(cls, text, subs, bare, live)
+        word.parts = parts
+        return word
+
+
+def _opens_substitution(tokens: list, index: int, text: Optional[str]) -> bool:
+    """True when token `index` is a word that ends in a live `$` or `@` (unquoted, unescaped, in its `live`
+    marks) and the next token is the operator `(` right behind it, without a blank. Where the word's offsets
+    in `text` are known the character behind the word has to be that `(`; a word without offsets (a token the
+    lexer builds from the body of a heredoc) or no `text` leaves it at the two tokens in a row."""
+    if index + 1 >= len(tokens):
+        return False
+    word, is_operator = tokens[index]
+    follower, follower_is_operator = tokens[index + 1]
+    if is_operator or not follower_is_operator or follower != "(":
+        return False
+    live = getattr(word, "live", None)
+    if not word or word[-1] not in "$@" or not live or live[-1] != "L":
+        return False
+    span = getattr(word, "span", None)
+    if text is not None and span is not None:
+        return span[1] < len(text) and text[span[1]] == "("
+    return True
+
+
+def _paren_matches(tokens: list) -> dict[int, Optional[int]]:
+    """For every operator token `(` of `tokens` (by its index), the index of the `)` that closes it, or None;
+    one pass over the tokens, parentheses counted over the operator tokens (also over lines). The lexer does
+    not know `case ... a)`, whose `)` closes nothing, so a `case` block is counted the way bash reads it: a
+    word `case` opens one only where a command name stands (the first word of a substitution, or one behind a
+    separator operator, `(` and a reserved word such as `then` included; `echo case` opens nothing), and it
+    ends at the `esac` that stands where a command name does, at the same depth. Inside it a `)` at the depth
+    of the block closes a pattern only (a pattern that opens with `(` counts as usual), and `;;`, `;&` and
+    `;;&` end a branch. Blocks and substitutions inside blocks nest. The body of a function stands where
+    commands do: after `name()` (also `name ( )`) and after `function name`, with or without `()`, so a
+    `case` block in it counts too. None for a `(` that has no closing `)` or whose substitution ends while a
+    `case` block inside it is still open (every `(` still open at that point is None with it)."""
+    matches: dict[int, Optional[int]] = {}
+    opened: list[int] = []  # the index of every `(` not yet closed, the innermost last
+    depth = 0
+    blocks: list[list] = []  # one [depth, phase] per open case block; phase: head, patterns, paren, body
+    at_command = False  # the next word stands where a command name does
+    fresh = False  # in the patterns of a block: no pattern word read yet (the place of an `esac` with no branch)
+    function_name = False  # the word `function` was read: the next word is the name of the function
+    name_at = -1  # the index of the last word that stood where a command name does, or named a function
+    for position, (item, is_operator) in enumerate(tokens):
+        block = blocks[-1] if blocks else None
+        here = block is not None and block[0] == depth
+        if not is_operator:
+            word = str(item)
+            if here and block[1] == "head":
+                if word == "in":
+                    block[1] = "patterns"
+                    fresh = True
+                    at_command = False
+                    continue
+            elif word == "case" and at_command:
+                blocks.append([depth, "head"])
+            elif word == "esac" and here and block[1] in ("patterns", "body") and (
+                at_command or (block[1] == "patterns" and fresh)
+            ):
+                blocks.pop()
+            if function_name:
+                function_name = False
+                at_command = True  # the body follows, with or without `()`
+                name_at = position
+            else:
+                if at_command and word == "function" and not (here and block[1] == "head"):
+                    function_name = True
+                if at_command and word[-1:] not in ("$", "@"):
+                    name_at = position
+                at_command = at_command and word in _RESERVED_PREFIXES
+            fresh = False
+        elif item == "(":
+            if here and block[1] == "patterns" and fresh:
+                block[1] = "paren"  # a pattern that opens with a parenthesis: counted as usual
+                at_command = False
+            else:
+                at_command = True
+            opened.append(position)
+            depth += 1
+            fresh = False
+        elif item == ")":
+            if here and block[1] == "patterns":
+                block[1] = "body"  # the parenthesis that ends a pattern closes nothing
+                at_command = True
+            elif opened:
+                depth -= 1
+                start = opened.pop()
+                if blocks and depth < blocks[-1][0]:
+                    # the substitution ends inside a case block that is not closed: it and every one around it
+                    # have no end, and what is read from here on starts afresh
+                    matches[start] = None
+                    for outer in opened:
+                        matches[outer] = None
+                    opened.clear()
+                    blocks.clear()
+                    depth = 0
+                    at_command = False
+                else:
+                    matches[start] = position
+                    if blocks and blocks[-1][0] == depth and blocks[-1][1] == "paren":
+                        blocks[-1][1] = "body"
+                        at_command = True
+                    else:
+                        # `name()`: the parentheses of a function that has just been named, its body follows
+                        at_command = (
+                            position >= 2 and name_at == position - 2 and tokens[position - 1] == ("(", True)
+                        )
+            fresh = False
+        elif item in (";;", ";&", ";;&") and here and block[1] in ("body", "patterns"):
+            block[1] = "patterns"
+            at_command = False
+            fresh = True
+        elif here and block[1] in ("patterns", "head") and item in ("\n", "|"):
+            at_command = False  # between patterns, or before `in`: no command stands here
+            fresh = fresh and item == "\n"
+        elif item in _SEPARATOR_OPS:
+            at_command = True
+            fresh = False
+    for start in opened:
+        matches[start] = None
+    return matches
+
+
+def _starts_behind_paren(word: object, text: Optional[str]) -> bool:
+    """True when `word` stands directly behind a `)` in `text` (its offsets are known; without them, never)."""
+    span = getattr(word, "span", None)
+    return text is not None and span is not None and span[0] > 0 and text[span[0] - 1] == ")"
+
+
+def _spanned_tokens(text: str, tokens: list) -> Optional[list]:
+    """The lexer's reading of `text` with the offsets of every word (the same two readings in the same order
+    as shell_targets._tokenize_chain), when it is the very token stream `tokens`; else None."""
+    for attempt in (lambda: _line_mode_tokens(text, True), lambda: _shell_tokens(text, True, True)):
+        try:
+            spanned = attempt()
+        except ValueError:
+            continue
+        same = len(spanned) == len(tokens) and all(
+            new[1] == old[1] and str(new[0]) == str(old[0]) for new, old in zip(spanned, tokens)
+        )
+        return spanned if same else None
+    return None
+
+
+class _SubOpen(str):
+    """The `(` that _join_substitutions puts in front of the commands inside a substitution it joined."""
+
+
+class _SubClose(str):
+    """The `)` behind them: the commands between a _SubOpen and its _SubClose run in a subshell."""
+
+
+def _join_substitutions(
+    tokens: list, text: Optional[str] = None, inner_first: bool = False, respan: bool = False,
+) -> list:
+    """`tokens` (the lexer's (text, is_operator) pairs) with every unquoted `$(...)`/`@(...)` put back into
+    the word it belongs to. The lexer reads `git -C $(pwd) commit` as `git`, `-C`, `$`, `(`, `pwd`, `)`,
+    `commit`, which the readers of the word lists take for three commands (`git -C $`, `pwd`, `commit`);
+    here it is the word list `git -C $(pwd) commit` (_JoinedWord) and `pwd` one more command. A substitution
+    opens where a word ends in a live `$` or `@` and `(` follows without a blank (_opens_substitution), and
+    ends at the parenthesis that closes it (_paren_matches, which counts a `case` block the way bash reads
+    it); the words glued to the word before and behind it are part of it (`x=$(a)`, `$(a)/b`, `a$(b)c$(d)`,
+    offsets in `text`). Left as the lexer read it: an opener without a closing parenthesis (or with a `case`
+    block inside that has no `esac`), `$((`, `$[`, a quoted or escaped `$`.
+
+    The commands inside a substitution are the lexer's own tokens, read as before, each in a `(` ... `)` of
+    its own (_SubOpen, _SubClose): behind the command that holds the substitution (`inner_first` False:
+    before the operator that ends it, or the end of the tokens), or in front of that command (`inner_first`
+    True, the order bash runs them in, as for backtick spans). A substitution inside a substitution is joined
+    the same way. The parentheses of all of them are matched once for the whole list, so the work grows with
+    the length of the tokens and not with their nesting. With `respan` and a `text`, tokens without offsets
+    are read again with them (only when they are the very tokens of `text`); without a `text` a word before
+    the `(` counts as glued and nothing behind the `)` does. Returns `tokens` itself when there is nothing
+    to join."""
+    if not any(_opens_substitution(tokens, index, text) for index in range(len(tokens) - 1)):
+        return tokens
+    if respan and text is not None:
+        spanned = _spanned_tokens(text, tokens)
+        if spanned is not None:
+            tokens = spanned
+    matches = _paren_matches(tokens)
+    shown_tokens = [str(item) for item, _is_operator in tokens]
+
+    def opens(index: int) -> bool:
+        return _opens_substitution(tokens, index, text) and matches.get(index + 1) is not None
+
+    def join(start: int, stop: int) -> list:
+        """The tokens `start` up to `stop` (an index of `tokens`), joined."""
+        result: list = []
+        pending: list[list] = []  # the tokens inside each substitution of the command being read, in order
+        command_start = 0
+
+        def release() -> None:
+            wrapped: list = []
+            for inner in pending:
+                wrapped.append((_SubOpen("("), True))
+                wrapped.extend(inner)
+                wrapped.append((_SubClose(")"), True))
+            if inner_first:
+                result[command_start:command_start] = wrapped
+            else:
+                result.extend(wrapped)
+            pending.clear()
+
+        index = start
+        while index < stop:
+            item = tokens[index]
+            word, is_operator = item
+            if is_operator:
+                if word in _SEPARATOR_OPS:
+                    release()
+                    result.append(item)
+                    command_start = len(result)
+                else:
+                    result.append(item)
+                index += 1
+            elif opens(index):
+                parts: list = []
+                shown: list[str] = []
+                bares: list[str] = []
+                lives: list[str] = []
+                subs: list[str] = []
+                opening = True  # tokens[index] is a word that opens a substitution that ends somewhere
+                while True:
+                    piece = tokens[index][0]
+                    parts.append(piece)
+                    tail = "$" if opening and piece[-1] == "@" else ""  # `@(` shows as `$(`: a value, whatever it is
+                    shown.append(str(piece)[:-1] + tail if tail else str(piece))
+                    bare = str(getattr(piece, "bare", piece))
+                    bares.append(bare[:-1] + tail if tail else bare)
+                    lives.append(getattr(piece, "live", None) or "." * len(piece))
+                    subs.extend(getattr(piece, "subs", ()))
+                    if not opening:
+                        index += 1
+                        break
+                    close = matches[index + 1]
+                    pending.append(join(index + 2, close))
+                    inside = "(" + " ".join(shown_tokens[index + 2:close]) + ")"
+                    shown.append(inside)
+                    bares.append(inside)
+                    lives.append("." * len(inside))
+                    index = close + 1
+                    if index >= stop or tokens[index][1] or not _starts_behind_paren(tokens[index][0], text):
+                        break
+                    opening = opens(index)
+                result.append(
+                    (_JoinedWord("".join(shown), tuple(subs), "".join(bares), "".join(lives), tuple(parts)), False)
+                )
+            else:
+                result.append(item)
+                index += 1
+        release()
+        return result
+
+    return join(0, len(tokens))
+
+
 def _command_word_lists_new(
     command: str, depth: int = 0, print_only_text: bool = False, plain_only: bool = False,
 ) -> list[tuple[list[str], Optional[str]]]:
@@ -343,7 +641,7 @@ def _command_word_lists_new(
     redirections, not also as the lexer hands it back (for a reader that takes the operands of a command)."""
     command = _join_line_continuations(command)
     tokens = None
-    for attempt in (lambda: _line_mode_tokens(command), lambda: _shell_tokens(command, True)):
+    for attempt in (lambda: _line_mode_tokens(command, True), lambda: _shell_tokens(command, True, True)):
         try:
             tokens = attempt()
             break
@@ -353,6 +651,7 @@ def _command_word_lists_new(
         return [
             (seg.split(), None) for seg in _SEGMENT_SPLIT_RE_FALLBACK.split(command) if seg.strip()
         ]
+    tokens = _join_substitutions(tokens, command)
 
     pairs: list[tuple[list[str], Optional[str], bool, list[str]]] = []
     words: list[str] = []
@@ -406,10 +705,11 @@ def _command_word_lists_new(
         result.extend((variant, sep) for variant in variants)
         nested: list[str] = []  # the texts of the commands this command runs, in the order found
         for word in words:
-            if "$(" in word:
-                if print_only and _is_quoted_text_substitution(word):
-                    continue
-                nested.append(word[word.index("$(") + 2:])
+            for piece in getattr(word, "parts", (word,)):  # a joined word: its own `$(...)` is read from the tokens
+                if "$(" in piece:
+                    if print_only and _is_quoted_text_substitution(piece):
+                        continue
+                    nested.append(piece[piece.index("$(") + 2:])
         for word in words:
             nested.extend(getattr(word, "subs", ()))
         if sep in _PIPE_OPS and pair_index > 0:

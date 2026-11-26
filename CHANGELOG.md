@@ -90,6 +90,9 @@ false alarms and a truer `update.py --plan`.
   has none.
 - PowerShell `saps`, `start` and `icm` are read like `Start-Process` and `Invoke-Command`. The path-like pieces of
   `perl|ruby -e` code count for write_guard and git_metadata_guard: `perl -e 'print ".git/config"'` is refused too.
+- An unquoted `$(…)` or `@(…)` in a git call no longer cuts it short for the word readers: `git -C $(pwd) commit` is
+  read whole, so worker-git-write, git-discard, git-metadata-guard, commit-pathspec, commit-hashes and secret-scan see
+  the commit.
 
 ## [2.7.0] - 2026-11-25
 

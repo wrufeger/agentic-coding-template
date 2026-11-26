@@ -107,7 +107,14 @@
 #          a coarse raw-text fallback treats a bare "git ... commit" mention as a `-a`-style commit
 #          with no known add-paths — over-inclusive on purpose, the same stance shell_targets takes
 #          for its own tokenizing fallback. The chain is read once, with the word lexer (backtick
-#          spans included); a failure in that reading propagates (_git_commit_invocations).
+#          spans included); a failure in that reading propagates (_git_commit_invocations). The chain is read
+#          once more, with offsets, when it holds an unquoted `$(...)`/`@(...)` that the lexer cuts into pieces
+#          (`git -C $(pwd) commit`: `git -C $`, `(`, `pwd`, `)`, `commit`): that is put back into the word it
+#          stands in, so the commit stays one command, and the commands inside it come in front of the command
+#          around it, as those of a backtick span do (bash runs them first); _simple_commands,
+#          command_words._join_substitutions says when it is left as cut. A `cd` inside such a substitution
+#          moves the directory only for the commands inside it (bash runs it in a subshell); one in a backtick
+#          span still moves the directory of the whole chain.
 #
 #          A file's own diff section over 2MB is skipped (named in the "not fully checked" note),
 #          every other file in the same diff is still scanned — the 2MB line is per file, not per
@@ -142,8 +149,10 @@
 #          `_POST_TOOL_USE_NOTES` (dispatch.py:193, right after the `("encoding_hint", ...)` line).
 #
 # Known limits:
-#   - a target reached only through `python -c`, a script, `eval`, `$(...)`, or a shell function is
-#     invisible, same as shell_targets' own write-target scan;
+#   - a target reached only through `python -c`, a script, `eval`, a quoted `"$(...)"`, or a shell
+#     function is invisible, same as shell_targets' own write-target scan (an unquoted `$(...)` is read,
+#     except one without its closing parenthesis or with a `case` block inside that has no `esac`: it stays
+#     cut at the `$`);
 #   - `cd`/`-C` tracking is a single "current directory", not shell_targets' branch-aware set of
 #     possible directories, and only a literal `cd <dir>`/`git -C <dir>` moves it — `pushd`/
 #     PowerShell's `Set-Location` do not, so a chain using either can end up scanned against the
@@ -179,6 +188,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import itertools
 import math
 import os
 import re
@@ -194,6 +204,7 @@ import actlib
 import feedback_privacy
 
 from .command_parse import Parse, parse_for
+from .command_words import _join_substitutions, _SubClose, _SubOpen
 from .common import (
     _HOOK_BUDGET, MAX_NESTING, _check_mode, _hook_deadline, _shell_command, _time_limit_note, _time_limit_refusal,
 )
@@ -1293,25 +1304,52 @@ def _nested_command(words: list[str]) -> Optional[str]:
     return None
 
 
-def _simple_commands(tokens: list) -> list[list[str]]:
+class _Command(list):
+    """The words of one simple command. `scope` names the `$(...)` substitutions the command stands in, the
+    outermost first (one number each, never reused): bash runs a substitution in a subshell, so a `cd` in it
+    does not move the directory of the commands around it (_git_commit_invocations)."""
+
+    scope: tuple = ()
+
+
+_SCOPE_IDS = itertools.count(1)
+
+
+def _simple_commands(tokens: list, source: Optional[str] = None) -> list[list[str]]:
     """Split a shell_targets token stream into simple commands (word tokens only) in the order
     they appear — everything this module needs from the chain: "did a `git add`/`git commit`
     happen, and in what order", not shell_targets' branch-aware write-target bookkeeping. A word
     right after a redirection operator is not specially dropped (see the module docstring's
-    "Known limits")."""
+    "Known limits"). An unquoted `$(...)` the lexer cut into pieces is put back into the word it
+    stands in, and the commands inside it come in front of the command around it, the order bash
+    runs them in (command_words._join_substitutions); `source` is the command the tokens are from,
+    which tells a glued word from a separate one; the commands inside it carry their substitution in `scope`."""
     commands: list[list[str]] = []
     words: list[str] = []
+    scope: list[int] = []  # the substitutions being read, outermost first
+    tokens = _join_substitutions(tokens, source, inner_first=True, respan=source is not None)
+
+    def flush() -> None:
+        nonlocal words
+        if words:
+            command = _Command(words)
+            command.scope = tuple(scope)
+            commands.append(command)
+        words = []
+
     for text, is_op in tokens:
-        if is_op and text in _SEPARATOR_OPS:
-            if words:
-                commands.append(words)
-            words = []
-            continue
-        if is_op:
-            continue
-        words.append(text)
-    if words:
-        commands.append(words)
+        if is_op and isinstance(text, _SubOpen):
+            flush()
+            scope.append(next(_SCOPE_IDS))
+        elif is_op and isinstance(text, _SubClose):
+            flush()
+            if scope:
+                scope.pop()
+        elif is_op and text in _SEPARATOR_OPS:
+            flush()
+        elif not is_op:
+            words.append(text)
+    flush()
     return commands
 
 
@@ -1326,15 +1364,26 @@ def _with_span_commands(commands: list[list[str]], depth: int = 0) -> list[list[
     expanded: list[list[str]] = []
     for words in commands:
         if depth < _MAX_NESTED_DEPTH:
+            outer = getattr(words, "scope", ())  # a span in a `$(...)`: its commands stand in it too
             for word in words:
                 for span in getattr(word, "subs", ()):
                     span_tokens = Parse("Bash", span).chain_tokens()
                     if span_tokens is not None:
-                        expanded.extend(_with_span_commands(_simple_commands(span_tokens), depth + 1))
+                        for command in _with_span_commands(_simple_commands(span_tokens, span), depth + 1):
+                            expanded.append(_in_scope(command, outer))
                     elif _GIT_COMMIT_FALLBACK_RE.search(span):
-                        expanded.append(["git", "commit", "-a"])
+                        expanded.append(_in_scope(["git", "commit", "-a"], outer))
         expanded.append(words)
     return expanded
+
+
+def _in_scope(command: list[str], outer: tuple) -> list[str]:
+    """`command` as a command that stands in the substitutions `outer` too (itself when there are none)."""
+    if not outer:
+        return command
+    scoped = _Command(command)
+    scoped.scope = outer + getattr(command, "scope", ())
+    return scoped
 
 
 _TOKENIZE_HERE: object = object()  # "no tokens handed in": None is a valid handed-in result
@@ -1381,8 +1430,16 @@ def _git_commit_invocations(
     pending_add_paths: list[dict] = []
     pending_all = False
     cwd = base_cwd
-    commands = _simple_commands(tokens)
+    entered: list[tuple[int, str]] = []  # the substitutions the command being read stands in: (scope number, cwd before it)
+    commands = _simple_commands(tokens, command)
     for words in _with_span_commands(commands, depth):
+        # A `cd` inside a `$(...)` moves the directory only within it (bash runs it in a subshell): the directory
+        # from before the substitution comes back when its commands are done, and a commit inside still sees it.
+        scope = getattr(words, "scope", ())
+        while entered and (len(entered) > len(scope) or entered[-1][0] != scope[len(entered) - 1]):
+            cwd = entered.pop()[1]
+        for number in scope[len(entered):]:
+            entered.append((number, cwd))
         if depth < _MAX_NESTED_DEPTH:
             nested = _nested_command(words)
             if nested is not None:
