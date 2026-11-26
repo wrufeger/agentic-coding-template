@@ -385,35 +385,44 @@ or a key with a value). Reading stays free: `symbolic-ref <name>`, `tag`, `tag -
 `--list`, `config get`. Git run against a folder outside the project (`git -C <folder>`, a leading `cd <folder>`) is
 exempt (a `-C` after a leading `cd` counts from the folder of that `cd`, inside the project too, so
 `cd src && git -C .. commit` is refused; a `-C` that leads back into the project, or cannot be resolved, ends the
-exemption), but a `config` write with `--global`, `--system` or `--file` is refused there too: it writes the user's, the machine's or
-a named file, not that repository.
+exemption, and so does a relative first `-C` when the folder the call runs in is not determinable: a leading `cd` to a
+variable, a substitution, a leading `~` or with no operand, a later `cd`, `Set-Location`, `Push-Location` or
+`Pop-Location`, a group such as `(cd $X) && git …`; an absolute first `-C` does not depend on that folder and keeps the
+exemption; limit: a `cd` inside the text of `pwsh -c '…'` is not read as a directory change), but a `config` write with
+`--global`, `--system` or `--file` is refused there too: it writes the user's, the machine's or a named file, not that
+repository.
 
 It also refuses the typed writing forms of further commands. Refused in every form, because they have no reading form:
 `gc`, `repack`, `pack-refs`, `maintenance`, `filter-branch`, `fast-import`, `update-index`, `read-tree`, `write-tree`,
-`commit-tree`, `mktag`, `mktree`, `checkout-index`. Refused except for the reading forms named here (any other form is
-a write): `notes` (free: bare, `list`, `show`, `get-ref`), `replace` (bare, `-l`/`--list`, `--format`), `worktree`
-(`list`), `remote` (bare, `-v`, `show`, `get-url`, and `prune` with `-n`/`--dry-run`), `reflog` (every form except
-`expire`, `delete`, `drop` and `write`; `expire` and `delete` are free as a dry run), `prune` (only as a dry run),
-`hash-object` (only without `-w`; in a bundle `-wt` sets it, `-tw` is the type `w`), `history` (bare, `-h`, or a form
-with `--dry-run`; it has no `-n`), `sparse-checkout` (`list`),
-`bisect` (bare, `log`, `visualize`/`view`, `terms`, `help`), `rerere` (`status`, `diff`, `remaining`). `apply` is
-free when it only analyses a patch: one of `--check`, `--stat`, `--numstat` or `--summary`, and every other word is
+`commit-tree`, `mktag`, `mktree`, `checkout-index`, `receive-pack`, `index-pack`, `unpack-objects` (also with `-n`) and
+`http-fetch` (they write objects, an index file or a ref); `upload-pack` only reads and stays free. Refused except for
+the reading forms named here (any other form is a write): `notes` (free: bare, `list`, `show`, `get-ref`), `replace`
+(bare, `-l`/`--list`, `--format`), `worktree` (`list`), `remote` (bare, `-v`, `show`, `get-url`, and `prune` with
+`-n`/`--dry-run`), `reflog` (every form except `expire`, `delete`, `drop` and `write`; `expire` and `delete` are free
+as a dry run), `prune` (only as a dry run), `hash-object` (only without `-w`; in a bundle `-wt` sets it, `-tw` is the
+type `w`), `history` (bare, `-h`, or a form with `--dry-run`; it has no `-n`), `sparse-checkout` (`list`), `bisect`
+(bare, `log`, `visualize`/`view`, `terms`, `help`), `rerere` (`status`, `diff`, `remaining`). `apply` is free when it
+only analyses a patch: one of `--check`, `--stat`, `--numstat` or `--summary`, and every other word is
 `-v`/`--verbose`, `-q`/`--quiet`, `-z`, `-R`/`--reverse`, `--recount`, `--allow-empty`, `--unidiff-zero`, `--index`,
 `--cached`, `--ignore-whitespace`, `--ignore-space-change`, `--whitespace=<action>` (`nowarn`, `warn`, `fix`, `error`
 or `error-all`, glued with `=`; a separate value is refused like `-p 1`), `-p<n>`, `-C<n>`, `--include=`, `--exclude=`,
 `--directory=`, `-` or a patch file; `--apply`, `--reject`, `--build-fake-ancestor`, `--3way`, any `--no-…` word or an
-abbreviation keeps it refused. A dry run is a word exactly `-n` or `--dry-run`
-before any `--` or `--end-of-options`, with no word that starts with `--no-` (git reads `--no-dry-run` as the write);
-an abbreviation such as `--dry` is refused, and so is a `-n` that is the value of `--expire`. Options before the
-subcommand (`git notes --ref=x add`, `git -C <folder> …`) are skipped when the subcommand is found. The commands that
-work with a remote are refused too: `fetch`, `clone`, `backfill`, `fetch-pack` and `send-pack` in every form (the
-orchestrator provides a remote's state), `submodule` except bare, `status` and `summary` (`submodule--helper`, git's
-internal helper, in every form), and `lfs` except `ls-files`, `status`, `env`, `version` and `locks` as the very first
-word after `lfs` (a bare `git lfs` and an option before the subcommand, `git lfs -X ls-files pull`, are refused); the
-program `git-lfs` (also `git-lfs.exe`, with a directory in front, in any case) is judged exactly like `git lfs`. The
-exemption for a folder outside the project does not cover a `clone` or `init` whose target folder or
-`--separate-git-dir` value, resolved against the `-C`/`cd` folder, lies inside the project or holds a variable or a
-leading `~`; without a target (the folder comes from the URL, a bare `init`) it stays. The check reads the words typed: an alias
+abbreviation keeps it refused. `git apply -h` with no other word prints the usage and is free; a bare `apply` is not.
+A dry run is a word exactly `-n` or `--dry-run` before any `--` or `--end-of-options`, with no word that starts with
+`--no-` (git reads `--no-dry-run` as the write); an abbreviation such as `--dry` is refused, and so is a `-n` that is
+the value of `--expire`. Options before the subcommand (`git notes --ref=x add`, `git -C <folder> …`,
+`git --attr-source <tree> …`) are skipped when the subcommand is found; `--attr-source` takes the next word as its
+value, so `git --attr-source commit status` is a `status`. The commands that work with a remote are refused too:
+`fetch`, `clone`, `backfill`, `fetch-pack` and `send-pack` in every form (the orchestrator provides a remote's state),
+`submodule` except bare, `status` and `summary` (`submodule--helper`, git's internal helper, in every form), and `lfs`
+except `ls-files`, `status`, `env`, `version` and `locks` as the very first word after `lfs` (a bare `git lfs` and an
+option before the subcommand, `git lfs -X ls-files pull`, are refused); the program `git-lfs` (also `git-lfs.exe`, with
+a directory in front, in any case) is judged exactly like `git lfs`. The exemption for a folder outside the project
+does not cover a `clone` or `init` whose target folder or `--separate-git-dir` value, resolved against the `-C`/`cd`
+folder, lies inside the project or holds a variable or a leading `~`; without a target (the folder comes from the URL,
+a bare `init`) it stays. The same holds for `worktree add`, `move`, `remove` and `repair`: every path word (for `add`
+only the first positional, not the commit-ish behind it, and without the values of `-b`, `-B` and `--reason`) is
+resolved the same way; `worktree lock`, `unlock` and `prune` stay exempt. The check reads the words typed: an alias
 from the repository's or the user's git configuration (`alias.zz = commit`, then `git zz`) is invisible to it, as is a
 variable that expands to an option; only a `-c alias.<name>=…` on the call itself is refused.
 

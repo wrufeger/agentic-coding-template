@@ -700,7 +700,11 @@ _VALUE_FLAGS = {
     "restore": frozenset({"-s", "--source"}),
 }
 _SED_INPLACE_FLAG_RE = re.compile(r"^-[A-Za-z]*i")
-_GIT_GLOBAL_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"})
+# Git's global options that take their value as the next word (git also takes `--attr-source=<tree>` glued with `=`,
+# which needs no entry: it is one word). A value left out of this set would be read as the subcommand.
+_GIT_GLOBAL_VALUE_FLAGS = frozenset({
+    "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source",
+})
 # Which git subcommands count as writes: check 1 only mv/rm (the orchestrator restores .act/ files
 # with checkout/restore on purpose), check 1c also checkout/restore (a worker never needs them).
 _GIT_WRITES_TEMPLATE_GUARD = frozenset({"mv", "rm"})

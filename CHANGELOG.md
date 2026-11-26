@@ -54,8 +54,16 @@ false alarms and a truer `update.py --plan`.
 - `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker, also with
   `--index`, `--cached`, `--ignore-whitespace`, `--ignore-space-change` or `--whitespace=<action>`; other options stay
   refused.
+- `worker-git-write` no longer refuses `git apply -h` (it only prints the usage) for a worker; a bare `git apply` and
+  `-h` next to other words stay refused.
 
 ### Security
+- `git --attr-source <tree> <command>` is read with the tree as the option's value, so a write behind it is refused for
+  a worker and the git-discard, secret-scan, commit-pathspec, git-metadata-guard and write-guard checks see the command.
+- `worker-git-write` also refuses a worker's `receive-pack`, `index-pack`, `unpack-objects` (also `-n`) and `http-fetch`
+  in every form; `upload-pack`, which only reads, stays free.
+- `worker-git-write` also refuses `worktree add`, `move`, `remove` and `repair` from outside the project when a path
+  lies inside it or cannot be resolved, and a relative `-C` when a `cd` leaves the working folder undeterminable.
 - `worker-git-write` also refuses a worker's writing forms of `gc`, `prune`, `repack`, `notes`, `remote`, `reflog`,
   `worktree`, `history`, `hash-object -w` and more; reading forms (`notes list`, `remote -v`, `prune --dry-run`) stay
   free.
