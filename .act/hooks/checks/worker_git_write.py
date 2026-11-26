@@ -14,7 +14,9 @@
 #          `hash-object`, `history`, `sparse-checkout`, `bisect`, `rerere`, `apply`, `submodule`, `lfs`): the reading
 #          forms are named, every other form is a write; `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`,
 #          `submodule--helper`, `receive-pack`, `index-pack`, `unpack-objects` (also with `-n`) and `http-fetch` have
-#          no reading form. The program `git-lfs` is judged like `git lfs` (_lfs_program_invocations). The deny-list
+#          no reading form. Every program `git-<name>` (also `git-lfs`) is judged like `git <name>`, without global
+#          options (_git_program_invocations); `update-git-for-windows` changes the Git installation, outside the project
+#          and every repository, and is refused in every form, an exemption included. The deny-list
 #          stays: a subcommand this check does not know is free (`upload-pack`, which only reads, is not in it).
 #          Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
@@ -35,8 +37,16 @@
 #          exemption does not cover a `clone` or `init` whose target
 #          folder (or `--separate-git-dir`), resolved against the `-C`/`cd` directory, lies inside the project or
 #          cannot be resolved (_target_enters_project): the repository would be created in the project. The same holds
-#          for the paths of `worktree add` (the first positional only, not the commit-ish), `move`, `remove` and
-#          `repair` (_worktree_targets).
+#          for the paths of `worktree add` (the first positional only, not the commit-ish), `move` and `remove`
+#          (_worktree_targets). git takes the `<worktree>` word of `remove` and the first word of `move` also as
+#          the last path components of ANY worktree of the repository (`ghi` for `/abc/def/ghi`), so there only a word
+#          that cannot be read that way keeps the exemption: an absolute one, or one that starts with `./` or `../` (a
+#          backslash form is no anchor: the shell reader consumes the backslash), and it must lie outside the project.
+#          Every `worktree repair` from outside is refused, with or without a path: besides the paths named it repairs
+#          the `.git` file of every linked worktree, wherever it lies, so one inside the project is written too.
+#          A `-C` chain with an absolute value is decided from the last absolute one, whatever folder the call runs in
+#          (_last_absolute_index); only the values after it count. Only literal values may stand before it: a variable
+#          or a substitution there (`-C $D -C /abs`) takes the relaxation away, as before.
 #
 # Review fixes (2026-09-23, on top of the command_words.py rewrite):
 #   - every `-C <dir>` on one invocation is applied in order against the running directory
@@ -73,10 +83,17 @@
 #     call itself is caught). A word is read as typed: a variable that expands to an option is not seen.
 #   - when the folder a call runs in is not determinable (_leading_cd_unresolvable: a leading `cd` to a variable, a
 #     substitution, a leading `~` or with no operand, a later `cd`, `Set-Location`, `Push-Location` or `Pop-Location`,
-#     a group such as `(cd $X) && git ...`), the exemption does not hold for a call whose FIRST `-C` is relative: it
-#     may count from that folder. An absolute first `-C` does not depend on the folder and keeps the exemption. Limit: a
-#     `cd` inside the text of `pwsh -c '...'` is not read as a directory change, so a relative `-C` behind it is
-#     resolved against the working directory.
+#     a group such as `(cd $X) && git ...`), the exemption does not hold for a call whose `-C` chain has no absolute
+#     value: it may count from that folder. A `-C` chain with an absolute value (and only literal values before it)
+#     does not depend on the folder: it counts from the last absolute one (_last_absolute_index). A `cd` inside the
+#     text of `pwsh -c '...'` is read like a later `cd` (the inner commands are read into the same list,
+#     _leading_cd_directory), so a `-C` chain without an absolute value behind it is refused.
+#   - a directory change that is not determinable counts also BEHIND the git call (`git -C ../x commit -m y && cd src`
+#     is refused): a loop can run the `cd` before the next git call, and this check knows no loops. A `-C` chain with
+#     an absolute value (literal values before it) stays free.
+#   - `/tmp/x` as a `-C` value is no absolute path on Windows (it names a folder of the current drive, not the system
+#     temp), so behind a directory change that is not determinable it counts as relative and is refused; without one
+#     it counts from the working folder and stays free. Throwaway material belongs under `.act-local/tmp/`.
 
 from __future__ import annotations
 
@@ -103,7 +120,8 @@ __all__ = [
     "_resolve_dash_c_chain", "_prefix_has_dir_override", "_first_operand",
     "_leading_cd_directory", "_leading_cd_run_directory", "_leading_cd_outside_project",
     "_worker_git_write_message", "check_worker_git_write",
-    "_lfs_program_invocations", "_target_enters_project", "_leading_cd_unresolvable", "_worktree_targets",
+    "_git_program_invocations", "_target_enters_project", "_leading_cd_unresolvable", "_worktree_targets",
+    "_last_absolute_index", "_is_anchored_path_word",
 ]
 
 # Every git subcommand that changes the tree or history for this check's purposes. "init" is
@@ -125,7 +143,12 @@ _GIT_WRITE_SUBCOMMANDS = frozenset({
     "write-tree", "commit-tree", "mktag", "mktree", "checkout-index",
     "fetch", "clone", "backfill", "fetch-pack", "send-pack", "submodule--helper",
     "receive-pack", "index-pack", "unpack-objects", "http-fetch",
+    "update-git-for-windows",
 })
+
+# Subcommands refused in every form, a folder outside the project included: they change something no `-C` or `cd`
+# can move out of the project. `update-git-for-windows` replaces the Git installation of the machine.
+_NEVER_EXEMPT_SUBCOMMANDS = frozenset({"update-git-for-windows"})
 
 _BRANCH_SHORT_RE = re.compile(r"-[alrvi]+")
 _BRANCH_PLAIN = frozenset({
@@ -599,6 +622,9 @@ _WRITE_FORM_TEXT = {
     "unpack-objects": "writes loose objects, also with `-n`; the orchestrator changes the repository, not a worker",
     "http-fetch": ("downloads objects and, with `-w`, writes a ref; the orchestrator provides a remote's state, not a "
                    "worker"),
+    "update-git-for-windows": ("replaces the Git installation of the machine, a place outside the project and every "
+                               "repository, in every form, also against a folder outside the project; the orchestrator "
+                               "updates tools, not a worker"),
 }
 
 # What is refused when `clone` or `init` runs from a folder outside the project but its target lies inside the
@@ -609,8 +635,11 @@ _TARGET_IN_PROJECT_TEXT = {
     "init": ("creates a repository in a folder inside the project, or one that cannot be resolved (a variable, `~`), "
              "although `-C` or `cd` points outside it; give a literal target folder outside the project, or none"),
     "worktree": ("adds, moves, removes or repairs a worktree at a path inside the project, or at one that cannot be "
-                 "resolved (a variable, `~`), although `-C` or `cd` points outside it; give literal paths outside the "
-                 "project"),
+                 "resolved (a variable, `~`), names a worktree to remove or move by a relative word (git reads it as the "
+                 "end of the path of any worktree) or repairs worktrees (it also rewrites the `.git` file of every "
+                 "linked worktree, wherever it lies), although `-C` or `cd` points outside it; give literal paths "
+                 "outside the project, and for `remove` and the first word of `move` one that is absolute or starts "
+                 "with `./` or `../`"),
 }
 
 
@@ -779,7 +808,8 @@ def _leading_cd_unresolvable(command: str, base_cwd: Optional[str], parse: Optio
     `~` or an operand that does not resolve, a later `cd`, `Set-Location`, `Push-Location`, `Pop-Location` and the like
     anywhere in the command, or a `cd` inside a group that closes before the git call (`(cd $X) && git ...`). A
     relative `-C` of a git call may then count from an unknown folder, so the exemption for a folder outside the
-    project does not hold for it (an absolute first `-C` does not depend on the folder). False without a working
+    project does not hold for it, unless its `-C` chain has an absolute value with only literal values before it (that
+    one does not depend on the folder). False without a working
     directory, and for a command without any directory change or with a determinable one. `parse` is the dispatcher's
     reading of `command`; without it the command is read here."""
     if base_cwd is None:
@@ -798,7 +828,27 @@ def _is_absolute_path_word(raw: str) -> bool:
     return not _is_dynamic_target(raw) and Path(_to_native_path(raw)).is_absolute()
 
 
-_LFS_PROGRAM = "git-lfs"
+_PROGRAM_PREFIX = "git-"
+
+
+def _last_absolute_index(dash_c_dirs: list[str]) -> Optional[int]:
+    """The index of the last `-C` value that is an absolute path (_is_absolute_path_word), None without one. An
+    absolute `-C` starts git in that folder whatever came before, so the values up to it do not matter and only the
+    ones after it are applied on top of it."""
+    found = None
+    for index, raw in enumerate(dash_c_dirs):
+        if _is_absolute_path_word(raw):
+            found = index
+    return found
+
+
+def _is_anchored_path_word(raw: str) -> bool:
+    """True when `raw` cannot be read as the last path components of some worktree (git's identification of a
+    `<worktree>` word, see `git worktree`): an absolute path (_is_absolute_path_word), or a word that starts with `./`
+    or `../` (PowerShell takes the slash too). A backslash form (dot, backslash) is no anchor: the shell reader this
+    check uses for a git call consumes the backslash, so such a word cannot be told from a name that starts with a
+    dot. Any other relative word, also `.` and `..` alone, is not anchored: it may name a worktree anywhere."""
+    return _is_absolute_path_word(raw) or raw.startswith(("./", "../"))
 
 
 def _ps_call_behind_assignment(words: list[str]) -> Optional[list[str]]:
@@ -812,22 +862,33 @@ def _ps_call_behind_assignment(words: list[str]) -> Optional[list[str]]:
     return call
 
 
-def _lfs_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
-    """Every call of the program `git-lfs` (also `git-lfs.exe`, with a directory in front, in any case) as
-    (prefix words, argv) like Parse.git_invocations_with_prefix gives a git call, with the argv rewritten to
-    `lfs <arguments>`: the program is `git lfs` under another name, so the loop of check_worker_git_write judges it
-    the same way, exemptions included. A call behind a PowerShell variable assignment (`$r = git-lfs pull`), which
-    the Bash reader takes for a command named `$r`, is read from the PowerShell word lists."""
+def _git_program_name(word: str) -> Optional[str]:
+    """The `<name>` of a program `git-<name>` (also `git-<name>.exe`, with a directory in front, in any case), None for
+    any other command word and for `git-` alone."""
+    name = _command_name(word)
+    rest = name[len(_PROGRAM_PREFIX):] if name.startswith(_PROGRAM_PREFIX) else ""
+    return rest if rest and not rest.startswith("-") else None  # a leading `-` would read as an option, not a name
+
+
+def _git_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
+    """Every call of a program `git-<name>` (`git-lfs`, `git-commit`, `git-receive-pack`, `git-update-git-for-windows`;
+    also with `.exe`, a directory in front, in any case) as (prefix words, argv) like Parse.git_invocations_with_prefix
+    gives a git call, with the argv rewritten to `<name> <arguments>`: the program is `git <name>` under another name,
+    without the global options a git call takes, so the loop of check_worker_git_write judges it the same way,
+    exemptions included. A call behind a PowerShell variable assignment (`$r = git-lfs pull`), which the Bash reader
+    takes for a command named `$r`, is read from the PowerShell word lists."""
     found = []
     for words, _ in parse.words():
         stripped = _strip_command_prefix(words)
-        if stripped and _command_name(stripped[0]) == _LFS_PROGRAM:
-            found.append((words[: len(words) - len(stripped)], ["lfs", *stripped[1:]]))
+        name = _git_program_name(stripped[0]) if stripped else None
+        if name:
+            found.append((words[: len(words) - len(stripped)], [name, *stripped[1:]]))
     if parse.tool_name == "PowerShell":
         for words in parse.ps_words():
             call = _ps_call_behind_assignment(words)
-            if call and _command_name(call[0]) == _LFS_PROGRAM:
-                found.append(([], ["lfs", *call[1:]]))
+            name = _git_program_name(call[0]) if call else None
+            if name:
+                found.append(([], [name, *call[1:]]))
     return found
 
 
@@ -911,12 +972,31 @@ def _worktree_targets(sub_args: list[str]) -> list[str]:
     return found[:1] if subcommand == "add" else found
 
 
+def _worktree_identifiers(sub_args: list[str]) -> list[str]:
+    """The words of a `worktree remove` or `worktree move` that name an EXISTING worktree (`<worktree>` in git's
+    synopsis): the one word of `remove` and the first of `move`. git matches such a word against the last path
+    components of every worktree of the repository before it reads it as a path, so a bare relative word may reach a
+    worktree anywhere. The second word of `move` is the new path, `repair` takes paths, `lock` and `unlock` write only
+    in the repository they run in: none of them is listed."""
+    subcommand = _subcommand_after_options(sub_args)[0]
+    targets = _worktree_targets(sub_args)
+    return targets if subcommand == "remove" else targets[:1] if subcommand == "move" else []
+
+
 def _target_enters_project(subcommand: str, sub_args: list[str], run_dir: Optional[Path], root: Path) -> bool:
     """True when a `clone`, `init` or `worktree` call that runs from `run_dir` (outside the project) writes into the
     project or somewhere not known to be outside it: a target (_clone_init_targets; for `worktree` the paths of
     _worktree_targets) resolving, against `run_dir`, to a path inside `root`, or one that cannot be resolved (a
     variable, a leading `~`), or an unknown `run_dir`. No target (the folder comes from the URL, a bare `init`,
-    `worktree lock`) stays outside."""
+    `worktree lock`) stays outside. A `worktree` call is also in the project when the word that names the worktree of
+    a `remove` or the first word of a `move` is not anchored (_is_anchored_path_word): git may read it as the end of
+    the path of a worktree inside the project. And every `repair` is, with or without a path: besides the paths named
+    it repairs the `.git` file of every linked worktree, wherever it lies."""
+    if subcommand == "worktree":
+        if _subcommand_after_options(sub_args)[0] == "repair":
+            return True
+        if not all(_is_anchored_path_word(raw) for raw in _worktree_identifiers(sub_args)):
+            return True
     targets = _worktree_targets(sub_args) if subcommand == "worktree" else _clone_init_targets(subcommand, sub_args)
     for raw in targets:
         resolved = None if run_dir is None else _resolve_dir(raw, str(run_dir))
@@ -962,7 +1042,7 @@ def check_worker_git_write(payload: dict) -> int:
     invocations = parse.git_invocations_with_prefix()
     if parse.tool_name == "PowerShell":
         invocations += parse.assigned_git_invocations()  # `$r = git commit -m x`: the Bash reader sees `$r`
-    invocations += _lfs_program_invocations(parse)  # `git-lfs pull` is `git lfs pull`
+    invocations += _git_program_invocations(parse)  # `git-lfs pull` is `git lfs pull`, `git-commit` is `git commit`
     for prefix, args in invocations:
         subcommand, sub_args, dash_c_dirs, has_dir_override, alias_defined = _parse_git_invocation(args)
         if subcommand is None:
@@ -971,19 +1051,25 @@ def check_worker_git_write(payload: dict) -> int:
             continue
 
         never_exempt = (has_dir_override or _prefix_has_dir_override(prefix)
+                        or subcommand in _NEVER_EXEMPT_SUBCOMMANDS
                         or (subcommand == "config" and _config_escapes_repo(sub_args)))
         target_in_project = False
         if not never_exempt:
             # where the call runs: a leading `cd` (inside the project too) is the start of the `-C` chain, else the
             # working directory; the exemption holds only when that lies outside the project
             run_dir: Optional[Path] = None
-            if leading_cd_directory is not None:
+            last_absolute = _last_absolute_index(dash_c_dirs)
+            if last_absolute is not None and not any(_is_dynamic_target(raw) for raw in dash_c_dirs[:last_absolute]):
+                # an absolute `-C` starts git in that folder whatever folder the call runs in and whatever `-C` came
+                # before it: the chain counts from the last absolute one (an unknown folder does not matter). Only
+                # when every value before it is literal: a variable or a substitution there is not trusted away
+                run_dir = _resolve_dash_c_chain(dash_c_dirs[last_absolute:], base_cwd or "")
+            elif leading_cd_directory is not None:
                 run_dir = (_resolve_dash_c_chain(dash_c_dirs, str(leading_cd_directory))
                            if dash_c_dirs else leading_cd_directory)
-            elif base_cwd is not None and dash_c_dirs and not (
-                    leading_cd_unknown and not _is_absolute_path_word(dash_c_dirs[0])):
+            elif base_cwd is not None and dash_c_dirs and not leading_cd_unknown:
                 # a relative first `-C` counts from the folder the call runs in; when a directory change leaves that
-                # folder not determinable there is no known run directory. An absolute first `-C` does not depend on it
+                # folder not determinable there is no known run directory
                 run_dir = _resolve_dash_c_chain(dash_c_dirs, base_cwd)
             exempt = root is not None and _is_outside_root(run_dir, root)
             if exempt:

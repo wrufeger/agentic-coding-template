@@ -68,7 +68,7 @@ The sentences are these:
 - `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, Copilot roles under `.github/agents/`, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
-- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`, `notes list`, `remote -v`, `reflog`, `worktree list`, `apply --check` (also with `--index`, `--cached` or `--whitespace=nowarn`), `submodule status`, `lfs ls-files` with no option before the subcommand): never stage, commit, stash, reset or check out, never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`, never run a maintenance, plumbing or notes/remote/worktree/reflog command that writes (`gc`, `prune`, `notes add`, `remote add`, `worktree add`, `hash-object -w` …), leave `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`, `submodule--helper` and the writing forms of `submodule` and `lfs` (also as `git-lfs`) to the orchestrator, and never `clone` or `init` into a folder of the project from a `-C` or `cd` outside it.
+- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`, `tag -l`, `config --get`, `notes list`, `remote -v`, `reflog`, `worktree list`, `apply --check` (also with `--index`, `--cached` or `--whitespace=nowarn`), `submodule status`, `lfs ls-files` with no option before the subcommand): never stage, commit, stash, reset or check out, never run `update-ref`, write `symbolic-ref`, create or delete a tag or write `config`, never run a maintenance, plumbing or notes/remote/worktree/reflog command that writes (`gc`, `prune`, `notes add`, `remote add`, `worktree add`, `hash-object -w` …), leave `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`, `submodule--helper` and the writing forms of `submodule` and `lfs` to the orchestrator, and never `clone`, `init` or a `worktree` command into a folder of the project from a `-C` or `cd` outside it; every program `git-<name>` counts as `git <name>`, and `update-git-for-windows` is never yours.
 - `nesting_guard`: Never start another worker; name a better split in your result.
 - `mcp_ide`: Do not use IDE tools that write, run a shell or run a program; use the standard tools inside your `Write scope:`.
 - `commit_pathspec`: Never stage with `git add -A`, `git add .` or `git commit -a`; name each path.
@@ -130,7 +130,10 @@ live probe, 2026-11-07, showed it is never displayed for Stop and SubagentStop).
 Checks: secret-read.
 
 Blocks a Read, Grep or shell reading command (`cat`, `grep`, `Get-Content`, `< file`, `git show HEAD:<file>` …) that
-names a secret file; path list and exceptions (`.env.example`, `*.pub` …) in the header of `secret_read.py`. Switch
+names a secret file; path list and exceptions (`.env.example`, `*.pub` …) in the header of `secret_read.py`. For a `git`
+call, git's global options that take a value (`-C`, `-c`, `--git-dir`, `--work-tree`,
+`--namespace`, `--exec-path`, `--config-env`, `--attr-source`; the list is shared with the other git checks) are skipped
+before the subcommand is read, so `git --attr-source HEAD show HEAD:.env` is a `show` of `.env`. Switch
 `secret-read` (`block`, `warn`, `off`); `ACT_SECRET_READ` in the environment for one run. Limits: a program that
 opens the file itself (`python script.py`, `docker run --env-file`) is invisible, and so is an MCP tool that takes a
 path, unless it is a read tool of the IDE server's known list (`ide-mcp`; each path argument of those is checked as a
@@ -257,7 +260,8 @@ assignment, `find -exec`, PowerShell pipeline) is refused unless the list names 
 `X=$(...)` or an array `a=($(...))` (an assignment is recognized only as a command of its own, never inside `[[ ...
 ]]` or as an argument) is a list only when a substitution in it lists files. Its pipeline must start with a lister in
 name mode and go on only with `head`, `tail`, `sort`, `uniq` or `grep`. The listers are `find`, `ls`, `fd`, `locate`;
-`git ls-files` without `-s`/`--stage`; `grep`, `rg` and `git grep` with `-l`/`-L` (also in a cluster such as `-rl`),
+`git ls-files` without `-s`/`--stage` (git's global options that take a value, `-C`, `-c`, `--git-dir`, `--work-tree`,
+`--namespace`, `--exec-path`, `--config-env` and `--attr-source`, are skipped before the subcommand); `grep`, `rg` and `git grep` with `-l`/`-L` (also in a cluster such as `-rl`),
 `--files-with-matches`, `--files-without-match`, `--files` or `--name-only`; and `git diff
 --name-only`/`--name-status`. The command word is matched whole, so `./find-version.sh` is no `find`. An `ls` whose
 path operands are all name-only globs that cannot match `.act` (`f=$(ls -t *.log | head -1)`; no `/` or backslash,
@@ -385,12 +389,23 @@ or a key with a value). Reading stays free: `symbolic-ref <name>`, `tag`, `tag -
 `--list`, `config get`. Git run against a folder outside the project (`git -C <folder>`, a leading `cd <folder>`) is
 exempt (a `-C` after a leading `cd` counts from the folder of that `cd`, inside the project too, so
 `cd src && git -C .. commit` is refused; a `-C` that leads back into the project, or cannot be resolved, ends the
-exemption, and so does a relative first `-C` when the folder the call runs in is not determinable: a leading `cd` to a
+exemption, and so does a `-C` chain without an absolute value when the folder the call runs in is not determinable: a leading `cd` to a
 variable, a substitution, a leading `~` or with no operand, a later `cd`, `Set-Location`, `Push-Location` or
-`Pop-Location`, a group such as `(cd $X) && git …`; an absolute first `-C` does not depend on that folder and keeps the
-exemption; limit: a `cd` inside the text of `pwsh -c '…'` is not read as a directory change), but a `config` write with
-`--global`, `--system` or `--file` is refused there too: it writes the user's, the machine's or a named file, not that
-repository.
+`Pop-Location`, a group such as `(cd $X) && git …`, or a `cd` inside the text of `pwsh -c '…'`, `powershell -Command
+"…"` or `bash -c '…'`, which counts like a later `cd`). A `-C` chain with an absolute value does not depend on that
+folder: it is decided from the last absolute `-C` on, whatever literal value came before it and wherever the call runs,
+and is free only when it ends outside the project (`cd $X && git -C sub -C <absolute folder outside> commit` is free,
+`git -C <absolute folder outside> -C ../project commit` is refused); a variable or a substitution before the last
+absolute `-C` (`git -C $D -C <absolute folder outside> commit`) takes that away and the call is refused. Two limits
+stay on purpose. A directory change that is not
+determinable counts also behind the git call (`git -C ../x commit -m y && cd src` is refused): a loop may run the `cd`
+before the next git call, and the check knows no loops; a `-C` chain with an absolute value keeps the exemption there. And `/tmp/x`
+as a `-C` value is no absolute path on Windows, where it names a folder of the current drive and not the system temp:
+behind such a directory change it counts as relative and is refused (without one it counts from the working folder and
+stays free); throwaway material belongs under `.act-local/tmp/`. A `config` write with `--global`, `--system` or
+`--file` is refused there too: it writes the user's, the machine's or a named file, not that repository, and so is
+`update-git-for-windows` in every form (it replaces the Git installation of the machine, also with `-C`, a leading `cd`
+or as the program `git-update-git-for-windows`).
 
 It also refuses the typed writing forms of further commands. Refused in every form, because they have no reading form:
 `gc`, `repack`, `pack-refs`, `maintenance`, `filter-branch`, `fast-import`, `update-index`, `read-tree`, `write-tree`,
@@ -416,13 +431,28 @@ value, so `git --attr-source commit status` is a `status`. The commands that wor
 `fetch`, `clone`, `backfill`, `fetch-pack` and `send-pack` in every form (the orchestrator provides a remote's state),
 `submodule` except bare, `status` and `summary` (`submodule--helper`, git's internal helper, in every form), and `lfs`
 except `ls-files`, `status`, `env`, `version` and `locks` as the very first word after `lfs` (a bare `git lfs` and an
-option before the subcommand, `git lfs -X ls-files pull`, are refused); the program `git-lfs` (also `git-lfs.exe`, with
-a directory in front, in any case) is judged exactly like `git lfs`. The exemption for a folder outside the project
+option before the subcommand, `git lfs -X ls-files pull`, are refused); every program `git-<name>` (also with `.exe`,
+a directory in front, in any case, and in PowerShell behind `&` or a variable assignment) is judged exactly like
+`git <name>`, without global options: `git-lfs pull` is `git lfs pull`, `git-commit -m x` is `git commit -m x`,
+`git-receive-pack` is `git receive-pack`, and a `-C` after it is that command's own option, not a folder; programs
+that name no write subcommand (`git-credential-manager`, `git-askpass`, `git-upload-pack`) stay free.
+`update-git-for-windows` (as `git update-git-for-windows` or `git-update-git-for-windows`) is refused in every form, a
+folder outside the project included, because it changes the Git installation of the machine and no repository.
+The exemption for a folder outside the project
 does not cover a `clone` or `init` whose target folder or `--separate-git-dir` value, resolved against the `-C`/`cd`
 folder, lies inside the project or holds a variable or a leading `~`; without a target (the folder comes from the URL,
-a bare `init`) it stays. The same holds for `worktree add`, `move`, `remove` and `repair`: every path word (for `add`
+a bare `init`) it stays. The same holds for `worktree add`, `move` and `remove`: every path word (for `add`
 only the first positional, not the commit-ish behind it, and without the values of `-b`, `-B` and `--reason`) is
-resolved the same way; `worktree lock`, `unlock` and `prune` stay exempt. The check reads the words typed: an alias
+resolved the same way; `worktree lock`, `unlock` and `prune` stay exempt. Two more cases refuse there. git reads the
+`<worktree>` word of `remove` and the first word of `move` (`git worktree remove <worktree>`, `move <worktree>
+<new-path>`; the second word of `move` is a path) also as the last path components
+of any worktree of the repository (`ghi` names `/abc/def/ghi`), so a bare relative word may reach a worktree inside
+the project: those words keep the exemption only when they are absolute or start with `./` or `../` (a backslash form
+is no anchor: the shell reader consumes the backslash, so write `./`) and lead outside the project; `.` and `..` alone
+and every other relative word are refused. And every `worktree repair` is refused there, with or without a path: besides
+the paths named it repairs the `.git` file of every linked worktree, wherever it lies (a probe in a repository of its own
+rewrote the broken file of a third worktree when run for another one), so it also writes into a worktree inside the
+project. `lock`, `unlock`, `prune` and `list` keep the rules above. The check reads the words typed: an alias
 from the repository's or the user's git configuration (`alias.zz = commit`, then `git zz`) is invisible to it, as is a
 variable that expands to an option; only a `-c alias.<name>=…` on the call itself is refused.
 

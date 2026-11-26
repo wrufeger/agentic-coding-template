@@ -72,7 +72,7 @@ from .brace_expand import expand_braces
 from .command_parse import Parse
 from .powershell_targets import _ALIASES, _cmdlet_targets, _ps_command_name, _ps_io_write_name, _ps_open_is_read_only
 from .powershell_targets import _ps_split_args, _ps_split_arguments, _ps_tokens, _ps_unquote
-from .shell_targets import _SEPARATOR_OPS
+from .shell_targets import _GIT_GLOBAL_VALUE_FLAGS, _SEPARATOR_OPS
 
 __all__ = ["Binding", "ShellFacts", "shell_facts", "find_hits", "FIND_HIT", "PsFed", "ps_fed_writes", "lists_files"]
 
@@ -309,7 +309,7 @@ _NAME_ONLY_LONG = frozenset({"--files-with-matches", "--files-without-match", "-
 _NAME_ONLY_CLUSTER_RE = re.compile(r"-[A-Za-z]*[lL][A-Za-z]*")
 _STAGE_CLUSTER_RE = re.compile(r"-[A-Za-z]*s[A-Za-z]*")
 _LATER_STAGES = frozenset({"head", "tail", "sort", "uniq", "grep"})
-_GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"})
+_GIT_VALUE_OPTIONS = _GIT_GLOBAL_VALUE_FLAGS | {"-C"}  # git's global options that take the next word, and `-C`
 
 
 def _command_word(word: str) -> str:

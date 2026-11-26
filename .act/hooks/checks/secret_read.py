@@ -113,7 +113,7 @@ import actlib
 from .brace_expand import expand_braces as _expand_braces
 from .command_parse import Parse, parse_for
 from .common import _check_mode, _note_hit, _shell_command, _target_class
-from .shell_targets import _command_name, _to_native_path
+from .shell_targets import _GIT_GLOBAL_VALUE_FLAGS, _command_name, _to_native_path
 
 __all__ = [
     "SECRET_EXCEPTIONS", "check_secret_read", "secret_label", "_READ_COMMANDS", "_home_roots",
@@ -594,7 +594,7 @@ def _git_literals(args: list[str]) -> list[str]:
     subcommand = None
     while index < len(args):
         arg = args[index]
-        if arg in ("-C", "-c", "--git-dir", "--work-tree"):
+        if arg == "-C" or arg in _GIT_GLOBAL_VALUE_FLAGS:  # git's global options that take the next word as their value
             index += 2
             continue
         if not arg.startswith("-"):

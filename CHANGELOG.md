@@ -54,10 +54,19 @@ false alarms and a truer `update.py --plan`.
 - `worker-git-write` no longer refuses `git apply --check`, `--stat`, `--numstat` or `--summary` for a worker, also with
   `--index`, `--cached`, `--ignore-whitespace`, `--ignore-space-change` or `--whitespace=<action>`; other options stay
   refused.
+- `worker-git-write` decides a `-C` chain with an absolute folder from the last absolute one: `cd $X && git -C sub -C
+  <absolute folder outside> commit` is no longer refused; a variable before it still is.
 - `worker-git-write` no longer refuses `git apply -h` (it only prints the usage) for a worker; a bare `git apply` and
   `-h` next to other words stay refused.
 
 ### Security
+- `worker-git-write` refuses `worktree remove <name>` and `move <name> …` from outside unless the word is absolute or
+  starts with `./` or `../` (git reads a bare word as the end of a path), and every `worktree repair` (it rewrites
+  all `.git` files).
+- `worker-git-write` judges every program `git-<name>` like `git <name>` (`git-commit`, `git-receive-pack`) and always
+  refuses `update-git-for-windows`, which changes the Git installation.
+- `secret-read` and the write-guard list reader skip all of git's global options that take a value (`--attr-source`,
+  `--config-env` …): `git --attr-source HEAD show HEAD:.env` is refused.
 - `git --attr-source <tree> <command>` is read with the tree as the option's value, so a write behind it is refused for
   a worker and the git-discard, secret-scan, commit-pathspec, git-metadata-guard and write-guard checks see the command.
 - `worker-git-write` also refuses a worker's `receive-pack`, `index-pack`, `unpack-objects` (also `-n`) and `http-fetch`
