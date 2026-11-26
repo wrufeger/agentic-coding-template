@@ -342,6 +342,7 @@ _early_failures: "list[str]" = []
 _CHECK_FAILURES: "list[str]" = []   # this process's failures of PreToolUse checks, in the order they happened
 _NOTE_FAILURES: "list[str]" = []    # ... of PostToolUse notes
 _FAILURE_PARTS = (".act-local", "check-failures")
+_FIRST_CHECK_AT: "float | None" = None   # seconds after _HOOK_STARTED at which _run_checks began its first check
 _FAILURE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _FAILURE_TTL = 86400.0  # seconds a queued failure text stays valid (the call may never reach PostToolUse)
 _MAX_FAILURE_REASON = 300  # characters of a check's own error text that go into a report
@@ -1169,18 +1170,37 @@ def _hook_time_limit(remaining: "tuple[tuple[str, str], ...]", payload: dict) ->
     names = list(dict.fromkeys(module for module, _func in remaining))
     budget = _hook_budget()
     refusing = [module for module, func in remaining if _judges_call(module, func, payload)]
+    timing = _timing_text()
     if not refusing:
         # Not a plain print: PreToolUse's stdout is transcript-only on an allowed call. Like a skipped check it is
         # reported to the human as systemMessage and left for this call's PostToolUse (_report_check_failures).
-        _CHECK_FAILURES.append(f"[act] {', '.join(names)} not run (hook time limit {budget:g} s)")
+        _CHECK_FAILURES.append(f"[act] {', '.join(names)} not run (hook time limit {budget:g} s) -- {timing}")
         return 0
     refusing = list(dict.fromkeys(refusing))
     tool_name = payload.get("tool_name")
     switches = ", ".join(f"{module} {_switch_text(module)}" for module in refusing)
     print(f"[act] hook time limit {budget:g} s used up before these checks ran: {', '.join(names)}; the "
           f"{tool_name if isinstance(tool_name, str) else 'tool'} call is refused unchecked. Run the command again. "
-          f"To switch a check off, set its row in docs/ai/config.md § Checks ({switches}).", file=sys.stderr)
+          f"To switch a check off, set its row in docs/ai/config.md § Checks ({switches}). Timing: {timing}.",
+          file=sys.stderr)
     return 2
+
+
+def _timing_text() -> str:
+    """The seconds since the hook started and when this call's first check began (one decimal), for the
+    time-limit messages: '<e> s since the hook started, the first check began at <f> s', or '... before any check
+    began' while _FIRST_CHECK_AT is still None."""
+    elapsed = time.monotonic() - _HOOK_STARTED
+    if _FIRST_CHECK_AT is None:
+        return f"{elapsed:.1f} s since the hook started, before any check began"
+    return f"{elapsed:.1f} s since the hook started, the first check began at {_FIRST_CHECK_AT:.1f} s"
+
+
+def _mark_first_check() -> None:
+    """Remember, once per call, the time (relative to _HOOK_STARTED) at which the first check began."""
+    global _FIRST_CHECK_AT
+    if _FIRST_CHECK_AT is None:
+        _FIRST_CHECK_AT = time.monotonic() - _HOOK_STARTED
 
 
 # ---------------------------------------------------------------------------
@@ -1475,7 +1495,10 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
               "`! python .act/scripts/packages.py remove <id>` (or `add <id>` again) for the package at fault",
               file=sys.stderr)
         return 2, "package_loader"
+    global _FIRST_CHECK_AT
+    _FIRST_CHECK_AT = None
     for check in package_pre:
+        _mark_first_check()
         result = _run_package_check(check, payload)
         if result != 0:
             return result, f"package:{check.package}:{check.module}"
@@ -1483,6 +1506,7 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
         if time.monotonic() - _HOOK_STARTED >= _hook_budget():
             code = _hook_time_limit(_PRE_TOOL_USE_CHECKS[position:], payload) or _package_checks_not_run(package_post)
             return (code, "hook_time_limit") if code else (0, None)
+        _mark_first_check()
         func, reason = _load(module_name, func_name)
         failed = False
         if func is None:

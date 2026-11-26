@@ -114,11 +114,13 @@ lines are in the JSON the hook prints, which Claude Code shows: `systemMessage` 
 for the model (PostToolUse; the session start's JSON for `tips`), never only on standard error, which nobody sees on
 exit 0. The dispatcher starts no further check once 8 s of the hook are used: if one that can refuse and judges this
 call is left, the call is refused `[act] hook time limit 8 s used up before these checks ran: <checks>; the <tool>
-call is refused unchecked. Run the command again. ...`. What a check judges is the table above, not wider and not
+call is refused unchecked. Run the command again. ... Timing: <e> s since the hook started, the first check began at
+<f> s.` (or `... before any check began.`). What a check judges is the table above, not wider and not
 narrower: `secret-read` a Read, a Grep and the shell, `outside-root` every tool with a path and the shell, `ide-mcp` an
 `mcp__` call of a write, shell or exec tool of an IDE server and a read tool that takes a path (`read_file`, which
 `ide-mcp` hands to `secret-read` and `outside-root` as a Read). Otherwise
-(only notes are left, or a call none of them judges) one line `[act] <checks> not run (hook time limit 8 s)` goes
+(only notes are left, or a call none of them judges) one line `[act] <checks> not run (hook time limit 8 s) -- <e> s
+since the hook started, the first check began at <f> s` (or `... before any check began`) goes
 to the human as `systemMessage` and to the model as `additionalContext` of the call's PostToolUse, and the call goes
 ahead. Assumption, not verified: that Claude Code displays the `systemMessage` of a PreToolUse or PostToolUse hook (a
 live probe, 2026-11-07, showed it is never displayed for Stop and SubagentStop).

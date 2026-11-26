@@ -42,6 +42,8 @@ false alarms and a truer `update.py --plan`.
   and what follows, e.g. that the session start will not report a note; a plain idea is answered as before.
 - Migration `009-whiteboard` names an old override `docs/ai/local/skeleton/concept/README.md` that has no counterpart
   at `docs/ai/local/skeleton/README.md` and tells you to move it by hand; nothing is moved.
+- The dispatcher's hook time limit refusal and note now also give the seconds since the hook started and when its
+  first check began, to tell a slow start from a slow check.
 
 ### Fixed
 - When a migration fails after it changed files, the update names those paths and keeps them in
