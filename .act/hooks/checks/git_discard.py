@@ -29,7 +29,7 @@
 #
 #          Which tree is meant: a leading `cd` (_resolve_cwd_after_leading_cd), then the `-C` chain, else the
 #          call's own `cwd`. A tree that cannot be pinned down -- no `cwd`, a dynamic `-C` or `cd` target,
-#          a second directory change, `--git-dir`/`--work-tree`/`GIT_DIR=`, `env -C`, `find -execdir` -- is
+#          a second directory change, `--git-dir`/`--work-tree`/`GIT_DIR=`, `env -C`, `wsl --cd`, `find -execdir` -- is
 #          refused, as is a git call that fails or runs out of the shared time budget (deny by default). A
 #          refusal for want of time says so in the same words as the scans (checks/common.py
 #          _time_limit_refusal: the check, "time budget used up", the seconds, run again, the config row that
@@ -69,6 +69,7 @@ from .worker_git_write import (
     _branch_lists_only,
     _leading_cd_directory,
     _parse_git_invocation,
+    _prefix_changes_folder,
     _prefix_has_dir_override,
     _resolve_dash_c_chain,
 )
@@ -237,19 +238,6 @@ def _alias_expansion(
     return words
 
 
-def _prefix_changes_directory(prefix: list[str]) -> bool:
-    """True if a wrapper ahead of `git` in the same simple command (`prefix`: the unstripped words
-    `Parse.git_invocations_with_prefix` hands back; for a PowerShell call read with PowerShell's own reader, so
-    a backslash in a word stays) runs it in a directory of its own
-    choosing rather than the shell's current one -- `env -C <dir>`/`env --chdir[=]<dir> git ...`.
-    Which directory is knowable in principle but not followed here (the same answer
-    shell_targets.py gives for its write targets); the caller refuses the call as "not
-    determinable"."""
-    if not any(_command_name(word) == "env" for word in prefix):
-        return False
-    return any(word in ("-C", "--chdir") or word.startswith("--chdir=") for word in prefix)
-
-
 def _has_find_execdir(command: str, parse: Optional[Parse] = None) -> bool:
     """True if any `find` in `command` carries `-execdir`/`-okdir`, which run their command inside
     whichever directory find happens to match -- one this check cannot pin down. Judged for the
@@ -308,9 +296,9 @@ def _resolve_target_dir(
 ) -> Optional[Path]:
     """The working tree a `git reset --hard` invocation targets, or None if it cannot be pinned
     down (see this module's header). `--git-dir`/`--work-tree` (either form) name the tree
-    independently of `-C`/`cwd`, and an `env -C <dir>` wrapper moves it somewhere this check does
+    independently of `-C`/`cwd`, and an `env -C <dir>` or `wsl --cd <dir>` wrapper moves it somewhere this check does
     not follow, so their presence always means "unknown" here."""
-    if has_dir_override or _prefix_has_dir_override(prefix) or _prefix_changes_directory(prefix):
+    if has_dir_override or _prefix_has_dir_override(prefix) or _prefix_changes_folder(prefix):
         return None
     if dash_c_dirs:
         if base_cwd is None:

@@ -487,8 +487,24 @@ Besides this, every git call the Bash reader finds is kept (a string piped into 
 PowerShell reading does not read), unless a PowerShell call is the same call: the words are compared with every
 backslash and backtick taken off, and a PowerShell call stands for one Bash call only. So a call the Bash reader saw
 is never lost, and one that both readers see is read as PowerShell reads it. A line that does not tokenize is read by
-the Bash reader alone. Unchanged: `wsl` in front of git is not seen, a dynamic word in place of the
+the Bash reader alone. Unchanged: a dynamic word in place of the
 subcommand, and `deps-scan`, `secret-scan` and `danger-scan`, which read a PowerShell call as Bash.
+
+Git behind `wsl` (`wsl`/`wsl.exe`, any case, a path in front; Bash and PowerShell) is read by the same checks as a git
+call of its own: `wsl git commit -m x`, `wsl -d Ubuntu -- git …`, `wsl "git commit -m x"`, `wsl bash -c "git commit -m
+x"`, `wsl --exec git …`. The options are the ones the outside-root and write checks read (`-d`/`--distribution`,
+`-u`/`--user`, `--cd`, `--shell-type` with a value, `-e`/`--exec`, `--system`, `--` ends them); a management command
+(`wsl --list`, `-l -v`, `--shutdown`) or no word behind the options is no call. Without `--exec` wsl hands the words,
+joined with blanks, to the distribution's shell, so the line is read anew like the text of an `eval` (one nesting
+level), in Bash rules also for a PowerShell call: `\` is an escape there, `wsl git -C ..\x commit` names `..x`, a folder
+inside the project. A word that holds a blank is read once more as the one word it was, so `wsl bash -c "git commit -m
+x"` is seen as that commit. With `--exec` the words are the call as they stand. In the git words `/mnt/<x>/…` is the
+drive `<X>:` (on Windows). The wsl words stand in the prefix of the git call. `worker-git-write` never exempts a call
+whose prefix holds `wsl --cd <dir>` or `env -C`/`--chdir <dir>`: the folder it runs in is not followed (`git -C
+<literal folder>` is the way); the `--cd` folder never holds for a command after the wsl call. `git-discard` refuses
+a `reset --hard` or `clean` behind `wsl --cd <dir>` as not determinable, like `env -C`, and a `cd`, `pushd` or `chdir` inside
+the wsl line counts as `--cd` for the git calls of that line. Limits: `git-<name>` behind `wsl` is not read; only the readers of a git call look into a wsl line; every other check reads it as before (`outside-root` and
+`write-guard` read it themselves, `secret-scan`, `danger-scan` and `deps-scan` do not follow it).
 
 `worker-run-watch` (`warn` default, `off` skips it, `block` counts as `warn`; it never refuses and never resets)
 reports what a worker's script or program changed, because the other checks read the text of a call and cannot see what

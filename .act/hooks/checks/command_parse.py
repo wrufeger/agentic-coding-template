@@ -14,7 +14,8 @@ the words behind them on as a call, `&` and the dot operator are taken off, and 
 and `@(`. The git calls of the Bash reading (`bash_calls_as_written`) come on top unless a PowerShell call is the same
 call (the words compared with every backslash and backtick taken off, each PowerShell call standing for one Bash
 call): they cover what a string hands to `iex` or `powershell -`, which the PowerShell reading does not read; a line
-that does not tokenize falls back to the Bash reader. A Bash call reads as before.
+that does not tokenize falls back to the Bash reader. A git call behind `wsl` is one in both readings
+(command_words._wsl_git_invocations). A Bash call reads as before.
 
 Rules the accessors keep:
   * lazy: a reader runs only when a check asks for its result;
@@ -158,13 +159,19 @@ class Parse:
         found = _powershell_targets._ps_git_invocations(self.ps_calls())
         uncovered = [_plain_words(args) for _prefix, args in found]
         for prefix, call in self.bash_calls_as_written():
-            if _shell_targets._command_name(call[0]) != "git":
-                continue
-            plain = _plain_words(call[1:])
-            if plain in uncovered:
-                uncovered.remove(plain)  # a PowerShell call is the same call: it stands for this one, once
+            name = _shell_targets._command_name(call[0])
+            if name == "git":
+                calls = [(prefix, call[1:])]
+            elif name == "wsl":  # the git calls behind wsl in the Bash reading, like the PowerShell reading's own
+                calls = _command_words._wsl_git_invocations([*prefix, call[0]], call[1:])
             else:
-                found.append((prefix, call[1:]))
+                continue
+            for call_prefix, args in calls:
+                plain = _plain_words(args)
+                if plain in uncovered:
+                    uncovered.remove(plain)  # a PowerShell call is the same call: it stands for this one, once
+                else:
+                    found.append((call_prefix, args))
         return found
 
     def bash_calls_as_written(self) -> list:

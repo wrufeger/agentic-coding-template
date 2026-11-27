@@ -52,6 +52,13 @@
 #          A `-C` chain with an absolute value is decided from the last absolute one, whatever folder the call runs in
 #          (_last_absolute_index); only the values after it count. Only literal values may stand before it: a variable
 #          or a substitution there (`-C $D -C /abs`) takes the relaxation away, as before.
+#          A git call behind `wsl`/`wsl.exe` is read like any other (Parse.git_invocations_with_prefix,
+#          command_words._wsl_git_invocations: the line is read anew like an `eval`, or the words as they stand after
+#          `--exec`; a `/mnt/<x>/...` word of git is the drive <X>:). Its prefix holds the wsl words, and a call whose
+#          prefix holds `wsl --cd <dir>` or `env -C`/`--chdir <dir>` never gets the exemption (_prefix_changes_folder,
+#          like a `GIT_DIR=` assignment): the folder it runs in is not followed. The `--cd` folder holds for that call
+#          only, never for a command after the wsl call. A `cd` inside the wsl line counts as `--cd` for the git calls
+#          of that line (command_words puts a `--cd` word into their prefix).
 #
 # Review fixes (2026-09-23, on top of the command_words.py rewrite):
 #   - every `-C <dir>` on one invocation is applied in order against the running directory
@@ -85,6 +92,8 @@
 #     checked normally.
 #   - a write made from inside a program (`python -c "...git..."`, a script file) is invisible,
 #     same limit as shell_targets.py's own docstring states.
+#   - behind `wsl` only `git` is read, not `git-<name>` (_git_program_invocations reads the command around the wsl
+#     call); a `cd` inside the wsl line takes the exemption away from the git calls of that line.
 #   - an alias from the repository's or the user's git configuration is invisible: the check reads the words
 #     typed, so `git zz` with `alias.zz = commit` in a config file passes (only a `-c alias.<name>=` typed on the
 #     call itself is caught). A word is read as typed: a variable that expands to an option is not seen.
@@ -128,7 +137,7 @@ __all__ = [
     "_leading_cd_directory", "_leading_cd_run_directory", "_leading_cd_outside_project",
     "_worker_git_write_message", "check_worker_git_write",
     "_git_program_invocations", "_target_enters_project", "_leading_cd_unresolvable", "_worktree_targets",
-    "_last_absolute_index", "_is_anchored_path_word",
+    "_last_absolute_index", "_is_anchored_path_word", "_prefix_changes_folder",
 ]
 
 # Every git subcommand that changes the tree or history for this check's purposes. "init" is
@@ -673,6 +682,40 @@ def _prefix_has_dir_override(prefix: list[str]) -> bool:
     return any(w.startswith("GIT_DIR=") or w.startswith("GIT_WORK_TREE=") for w in prefix)
 
 
+def _prefix_changes_folder(prefix: list[str]) -> bool:
+    """True if a wrapper in `prefix` (the words in front of `git`, unstripped) runs git in a folder of its own:
+    `env -C <dir>`/`--chdir <dir>` (also glued, `-C<dir>`, `--chdir=<dir>`, an abbreviation of the long option, a
+    short option cluster holding C) or `wsl --cd <dir>` (the wsl words of a git call behind wsl are in its prefix,
+    command_words._wsl_git_invocations, which also puts a `--cd` word there for a `cd` inside the wsl line). Where such a call runs is not followed, so the outside-project exemption
+    never applies to it, like with a `GIT_DIR=` assignment (_prefix_has_dir_override); a `-C <dir>` behind it would
+    count from that folder. git_discard reads it the same way."""
+    for index, word in enumerate(prefix):
+        name = _command_name(word)
+        behind = [str(w) for w in prefix[index + 1:]]
+        if name == "env" and any(_is_env_chdir_option(w) for w in behind):
+            return True
+        if name == "wsl" and "--cd" in behind:
+            return True
+    return False
+
+
+def _is_env_chdir_option(word: str) -> bool:
+    """True for a word that is env's `-C`/`--chdir` option: `-C`, `-C<dir>`, a cluster of short options with a `C` in
+    it, `--chdir`, `--chdir=<dir>` and an abbreviation GNU getopt accepts (`--ch`, `--chd`...)."""
+    if word.startswith("--"):
+        option = word.split("=", 1)[0]
+        return len(option) >= 4 and "--chdir".startswith(option)
+    if not word.startswith("-") or len(word) < 2:
+        return False
+    # a short option cluster: env's options that take a value (`-u`, `-S`, `-P`) end it, what follows is their value
+    for letter in word[1:]:
+        if letter == "C":
+            return True
+        if letter in "uSP":
+            return False
+    return False
+
+
 def _resolve_dir(raw: str, base: str) -> Optional[Path]:
     """A literal directory argument resolved to an absolute Path, or None if it is dynamic
     ($VAR, `` `...` ``, $(...), a leading ~) or fails to resolve at all — either way the caller
@@ -1055,7 +1098,7 @@ def check_worker_git_write(payload: dict) -> int:
         if not (alias_defined or _is_git_write_subcommand(subcommand, sub_args)):
             continue
 
-        never_exempt = (has_dir_override or _prefix_has_dir_override(prefix)
+        never_exempt = (has_dir_override or _prefix_has_dir_override(prefix) or _prefix_changes_folder(prefix)
                         or subcommand in _NEVER_EXEMPT_SUBCOMMANDS
                         or (subcommand == "config" and _config_escapes_repo(sub_args)))
         target_in_project = False

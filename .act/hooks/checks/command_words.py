@@ -94,6 +94,12 @@
 #     being the last command inside the substitution - the same gap as when the lexer cut the call at the `$`.
 #   - a write made from inside a program (`python -c "...git..."`, a script file) is invisible,
 #     same limit shell_targets.py's own docstring states for its write-target scan.
+#   - a command behind `wsl`/`wsl.exe` is not in `_command_word_lists` (and `wsl` is no prefix word of
+#     `_strip_command_prefix`): the git readers (`_git_invocations_with_prefix` and, for a PowerShell call,
+#     powershell_targets._ps_git_invocations) look into it themselves (`_wsl_git_invocations`: the line is read
+#     anew like an `eval`, or the words as they stand after `--exec`; the wsl words go into the git call's prefix).
+#     Not covered, as before: `git-<name>` behind wsl. A `cd`/`pushd`/`popd`/`chdir` anywhere in the wsl line puts
+#     a `--cd` word into the prefix of its git calls (the folder is not followed, as with `wsl --cd`).
 #   - `find -exec ... {} \;` / `+`: the escaped `\;` form is recognized as shlex would hand it
 #     back (a literal `;` token, since shlex's own backslash handling already strips the escape in
 #     POSIX mode) as well as a raw `\;` string (seen from a whole-command fallback tokenization,
@@ -123,6 +129,8 @@ from .shell_targets import (
     _ps_reads_stdin,
     _reads_script_from_stdin,
     _shell_tokens,
+    _wsl_command_line,
+    _wsl_native_word,
     _Word,
 )
 
@@ -130,6 +138,7 @@ __all__ = [
     "_PS_NAMES", "_SEGMENT_SPLIT_RE_FALLBACK", "_command_word_lists_new", "_command_word_lists",
     "_nested_word_lists", "_strip_command_prefix",
     "_stripped_word_lists", "_git_invocations_with_prefix", "_git_invocations",
+    "_wsl_git_invocations", "_wsl_git_word",
     "_JoinedWord", "_SubOpen", "_SubClose", "_join_substitutions",
 ]
 
@@ -807,19 +816,137 @@ def _stripped_word_lists(command: str) -> list[list[str]]:
     ]
 
 
+def _wsl_git_word(word: str) -> str:
+    """A word of a git call run behind `wsl`, with the WSL mount of a drive (`/mnt/d/x`, also the value of a
+    `--option=/mnt/d/x`) rewritten to the drive form the checks compare against (shell_targets._wsl_native_word,
+    on win32 only); any other word as it is."""
+    mapped = _wsl_native_word(word)
+    if mapped != word:
+        return mapped
+    key, equals, value = str(word).partition("=")
+    if equals and key.startswith("--"):
+        mapped_value = _wsl_native_word(value)
+        if mapped_value != value:
+            return f"{key}={mapped_value}"
+    return word
+
+
+def _wsl_git_invocations(
+    prefix: list[str], args: list[str], depth: int = 0,
+) -> list[tuple[list[str], list[str]]]:
+    """The git calls behind a `wsl`/`wsl.exe` call as (prefix, git argv) pairs like _git_invocations_with_prefix.
+    `prefix` is everything up to and including the wsl word, `args` the words behind it. The words of the wsl call
+    with its options (`-d Ubuntu`, `--cd <dir>`, `--exec`, `--`, read by shell_targets._wsl_command_line, which is
+    the only list of them) stand in the prefix of the git call in front of the prefix of its own, so a check sees
+    `--cd` there. Without `--exec`/`-e` wsl joins the words with blanks and hands the text to the distribution's
+    shell: it is read anew like the text of an `eval` (one nesting level, _nested_word_lists), in Bash rules, also
+    for a call that came from PowerShell (a backslash is an escape there). A word that holds a blank is read once
+    more as the one word it was (`wsl bash -c "git commit -m x"`: the joined text alone would give `bash -c git`);
+    wsl passes its command line on with the quotes the caller wrote. With `--exec` the words are one program call
+    as they stand. A management command (`--list`, `--shutdown`, ...) or no word behind the options is no call. In
+    the git words `/mnt/<x>/...` is the drive <X>: (_wsl_git_word). A wsl call inside the line is followed."""
+    parsed = _wsl_command_line(args)
+    if parsed is None:
+        return []
+    rest, _cd_dir, exec_mode = parsed
+    lead = list(prefix) + list(args[: len(args) - len(rest)])
+    texts: list[str] = []
+    if exec_mode:
+        texts.append(shlex.join(str(word) for word in rest))
+    else:
+        texts.append(" ".join(str(word) for word in rest))
+        quoted = " ".join(shlex.quote(str(word)) if any(c.isspace() for c in word) else str(word) for word in rest)
+        if quoted not in texts:
+            texts.append(quoted)
+    found: list[tuple[list[str], list[str]]] = []
+    seen: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
+    for text in texts:
+        lists = []
+        changes_folder = False
+        for words, _separator in _nested_word_lists(text, depth):
+            stripped = _strip_command_prefix(words)
+            if stripped:
+                lists.append((words, stripped))
+                changes_folder = changes_folder or _command_name(stripped[0]) in _WSL_LINE_CD_NAMES
+        for words, stripped in lists:
+            inner_prefix = lead + words[: len(words) - len(stripped)]
+            name = _command_name(stripped[0])
+            if name == "git":
+                # a `cd` anywhere in the line: the folder the call runs in is not followed, like `--cd` (a prefix word
+                # of the same meaning), so the checks never grant a folder-based exemption
+                call = (inner_prefix + (["--cd"] if changes_folder else []),
+                        [_wsl_git_word(word) for word in stripped[1:]])
+                pairs = [call]
+            elif name == "wsl":
+                if depth + 1 >= _MAX_SCAN_DEPTH:
+                    pairs = _peel_nested_wsl(inner_prefix, stripped)
+                else:
+                    pairs = _wsl_git_invocations(inner_prefix + [stripped[0]], stripped[1:], depth + 1)
+            else:
+                continue
+            for pair in pairs:
+                key = _pair_key(pair)
+                if key not in seen:
+                    seen.add(key)
+                    found.append(pair)
+    return found
+
+
+# Names that change the folder inside a command line run behind wsl (the distribution's shell).
+_WSL_LINE_CD_NAMES = frozenset({"cd", "pushd", "popd", "chdir"})
+
+
+def _peel_nested_wsl(prefix: list[str], words: list[str]) -> list[tuple[list[str], list[str]]]:
+    """The git call behind a chain of `wsl` calls that starts with `words[0]` (a wsl word), read by index and not by
+    recursion: from _MAX_SCAN_DEPTH on every nested wsl call would otherwise join and lex the whole text anew (and
+    `wsl wsl wsl ...` a thousand times deep would run out of stack). The words stand as they are, with no further
+    quoting rules; `prefix` is the prefix of the first wsl word's call, the wsl words and options go in front of the
+    git call's own. At most one call."""
+    index = 0
+    while True:
+        tail = words[index:]
+        stripped = _strip_command_prefix(tail)
+        if not stripped:
+            return []
+        index += len(tail) - len(stripped)
+        name = _command_name(stripped[0])
+        if name == "git":
+            return [(prefix + words[:index], [_wsl_git_word(word) for word in stripped[1:]])]
+        if name != "wsl":
+            return []
+        parsed = _wsl_command_line(stripped[1:])
+        if parsed is None:
+            return []
+        index += len(stripped) - len(parsed[0])
+
+
+def _pair_key(pair: tuple[list[str], list[str]]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(prefix, argv) with every word as plain text, hashable: what tells two readings of one wsl line apart."""
+    return tuple(str(word) for word in pair[0]), tuple(str(word) for word in pair[1])
+
+
 def _git_invocations_with_prefix(command: str) -> list[tuple[list[str], list[str]]]:
     """Every `git ...` invocation, as (the raw words consumed as a prefix before "git" —
     assignments and wrapper commands/flags, deliberately left UNstripped so a `GIT_DIR=`/
     `GIT_WORK_TREE=` assignment is still visible there, and git's own argv with its own name
     dropped). checks/worker_git_write.py's outside-project exemption needs the prefix (a
     GIT_DIR=/GIT_WORK_TREE= assignment there must disable that exemption, see its own module);
-    checks/commit_pathspec.py, which does not care about that, uses `_git_invocations` instead."""
+    checks/commit_pathspec.py, which does not care about that, uses `_git_invocations` instead.
+    A git call behind `wsl`/`wsl.exe` (any case, a path in front) is one too (_wsl_git_invocations): the words
+    of the wsl call with its options stand in its prefix, a `/mnt/<x>/...` word of git is the drive <X>:. Only
+    these readers see it: `_strip_command_prefix`, `_command_word_lists` and the other checks read a wsl line as
+    before (outside_root and write_guard read it themselves)."""
     result = []
     for words, _ in _command_word_lists(command):
         stripped = _strip_command_prefix(words)
-        if stripped and _command_name(stripped[0]) == "git":
-            prefix = words[: len(words) - len(stripped)]
+        if not stripped:
+            continue
+        prefix = words[: len(words) - len(stripped)]
+        name = _command_name(stripped[0])
+        if name == "git":
             result.append((prefix, stripped[1:]))
+        elif name == "wsl":
+            result.extend(_wsl_git_invocations(prefix + [stripped[0]], stripped[1:]))
     return result
 
 

@@ -172,7 +172,9 @@ from typing import Callable, Iterable, Optional
 from . import inline_code as _inline_code
 from .common import MAX_NESTING, _is_unplaced_target, _unplaced_reason, _unplaced_target  # noqa: F401 - re-exported
 from . import shell_targets as _shell_targets  # the module itself, for the rsync flag it holds while scanning
-from .command_words import _command_word_lists, _strip_command_prefix  # command_words imports no PowerShell reader
+from .command_words import (  # command_words imports no PowerShell reader
+    _command_word_lists, _strip_command_prefix, _wsl_git_invocations,
+)
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
@@ -1384,17 +1386,25 @@ def _ps_calls(word_lists: list[list[str]], depth: int = 0) -> list[tuple[list[st
 
 def _ps_git_invocations(calls: list[tuple[list[str], list[str]]]) -> list[tuple[list[str], list[str]]]:
     """The git calls among `calls` (_ps_calls) as (prefix, git's argv) like Parse.git_invocations_with_prefix: git's
-    own name dropped, and the stop-parsing word `--%` too (PowerShell does not hand it to the program)."""
+    own name dropped, and the stop-parsing word `--%` too (PowerShell does not hand it to the program). A git call
+    behind `wsl`/`wsl.exe` is one too (command_words._wsl_git_invocations): the words of the wsl call are in its
+    prefix, the line behind wsl is read as the distribution's shell reads it (Bash rules, a backslash an escape) or,
+    after `--exec`, as the words stand. The calls `_ps_calls` hands to other readers stay as they are."""
     found: list[tuple[list[str], list[str]]] = []
     for prefix, call in calls:
-        if _ps_command_name(call[0]) != "git":
+        name = _ps_command_name(call[0])
+        if name not in ("git", "wsl"):
             continue
         argv = list(call[1:])
         for index, word in enumerate(argv):
             if getattr(word, "raw", word) == "--%":
                 del argv[index]
                 break
-        found.append((list(prefix), argv))
+        if name == "wsl":
+            # a git call behind wsl: the line is read in Bash rules by command_words (the wsl words go to the prefix)
+            found.extend(_wsl_git_invocations([*prefix, call[0]], argv))
+        else:
+            found.append((list(prefix), argv))
     return found
 
 
