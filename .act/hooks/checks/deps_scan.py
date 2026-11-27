@@ -91,7 +91,13 @@
 #          call the tree has not changed yet. Nothing is held; a finding goes into the inbox as one
 #          `report` entry (`entries.create_entry`), once per lock-file state and day. A clean result,
 #          a missing scan tool or a tool error writes nothing. The command is recognised through
-#          `command_words` (`git -C dir pull` and `cd x && git merge y` included); the changed lock
+#          `command_words` (`git -C dir pull` and `cd x && git merge y` included); a PowerShell call is
+#          read from PowerShell's own words (Parse.commands, a backslash kept): `Set-Location ..\x; git merge y`
+#          and `git -C ..\x pull` name `x`, `cd`, `chdir`, `Set-Location`, `sl`, `Push-Location` and `pushd` move
+#          the folder of the calls behind them (`Push-Location`/`pushd` push the folder they leave,
+#          `Pop-Location`/`popd` return to the one on top of that stack), a `Pop-Location` with an empty stack and
+#          a folder that is not literal make it unknown (no note); a folder change inside a handed-on text
+#          (`bash -c`, `cmd /c`, `pwsh -Command`) carries over to the calls behind it; the changed lock
 #          files come from git: ORIG_HEAD..HEAD for merge and pull, the picked commits for
 #          cherry-pick (only when HEAD moved in the last minutes), plus everything the tree differs
 #          from HEAD in while an operation is open (MERGE_HEAD, CHERRY_PICK_HEAD, REBASE_HEAD,
@@ -174,6 +180,7 @@ from .secret_scan import (
     _WHOLE_TREE_PATHSPEC,
     _resolve_dir,
 )
+from .powershell_targets import _ps_dir, _PsLocation
 from .shell_targets import _command_name
 from .worker_git_write import _first_operand, _parse_git_invocation, _resolve_dash_c_chain
 
@@ -686,8 +693,9 @@ def _check(payload: dict, root: Path, command: str) -> int:
         return 2
 
     try:
+        shared = parse_for(payload, command)
         invocations = _git_commit_invocations(
-            command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+            command, base_cwd, deadline, {}, chain_tokens=shared.chain_tokens(), parse=shared,
         )
     except _GitTimedOut:
         return refuse_for_time()  # a git alias could not be looked up in time: the call may be a commit
@@ -856,21 +864,39 @@ class _IntegrationCall:
 
 def _integration_calls(command: str, base_cwd: str, payload: Optional[dict] = None) -> "list[_IntegrationCall]":
     """Every `git merge|pull|cherry-pick` in `command`. Found through the shared command-word
-    tokenizer, never by a regex over the raw string."""
+    tokenizer, never by a regex over the raw string. A PowerShell call whose line PowerShell's own reader
+    tokenizes is read from its commands (Parse.commands: a backslash kept, a call inside `( )`, `$( )` or
+    `{ }` a call): `cd`, `Set-Location`, `sl`, `chdir`, `Push-Location` and `pushd` move the folder of the calls
+    behind them (powershell_targets._PsLocation); `Push-Location`/`pushd` push the folder they leave and
+    `Pop-Location`/`popd` return to the folder on top of that stack; a `Pop-Location` with an empty stack and a folder
+    that is not literal leave it unknown (target None), as an unclear `cd` does in Bash."""
     calls: "list[_IntegrationCall]" = []
     cwd: Optional[str] = base_cwd
-    for words, _separator in parse_for(payload or {}, command).words():
-        stripped = _strip_command_prefix(words)
+    parse = parse_for(payload or {}, command)
+    powershell = parse.tool_name == "PowerShell" and bool(parse.ps_words())
+    location = _PsLocation(base_cwd)
+    commands: list[list[str]]
+    if powershell:
+        commands = parse.commands()
+    else:
+        commands = [_strip_command_prefix(words) for words, _separator in parse.words()]
+    for stripped in commands:
         if not stripped:
             continue
+        if powershell:
+            if location.follow(stripped, _resolve_dir, False):
+                cwd = location.cwd
+                continue
         name = _command_name(stripped[0])
-        if name in _CD_NAMES:
+        if not powershell and name in _CD_NAMES:
             operand = _first_operand(stripped[1:])
             cwd = _resolve_dir(operand, cwd) if operand is not None and cwd is not None else None
             continue
         if name != "git":
             continue
         subcommand, sub_args, dash_c_dirs, _override, _alias = _parse_git_invocation(stripped[1:])
+        if powershell:
+            dash_c_dirs = [_ps_dir(directory) for directory in dash_c_dirs]
         if subcommand not in _INTEGRATION_SUBCOMMANDS or _INTEGRATION_SKIP_FLAGS & set(sub_args):
             continue
         if cwd is None:

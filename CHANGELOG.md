@@ -65,6 +65,8 @@ false alarms and a truer `update.py --plan`.
   `worktree remove`/`move`.
 - The git checks see a git call behind `wsl`/`wsl.exe` (`wsl git commit`, `wsl -e …`, `wsl bash -c "…"`);
   `worker-git-write` never exempts `wsl --cd <dir>`, `env -C <dir>` or a `cd` in the wsl line; `git-discard` refuses `wsl --cd`.
+- `secret-scan`, `danger-scan` and `deps-scan` read git in a PowerShell call with PowerShell's own reader:
+  `git -C ..\x commit` and `Set-Location ..\x; git commit` are checked in `x`, no longer in the start folder.
 - The write guard reads a git list source behind `-C .`, `--no-pager`, `-P` or `--attr-source` as without it and
   refuses one behind any other global option, in PowerShell too; `worker-git-write` sees `.\git-lfs.exe pull`.
 - `worker-git-write` refuses `worktree remove <name>` and `move <name> …` from outside unless the word is absolute or

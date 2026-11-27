@@ -154,14 +154,25 @@
 #     except one without its closing parenthesis or with a `case` block inside that has no `esac`: it stays
 #     cut at the `$`);
 #   - `cd`/`-C` tracking is a single "current directory", not shell_targets' branch-aware set of
-#     possible directories, and only a literal `cd <dir>`/`git -C <dir>` moves it — `pushd`/
-#     PowerShell's `Set-Location` do not, so a chain using either can end up scanned against the
-#     wrong directory (a wrong guess only weakens the scan, never blocks something real);
+#     possible directories, and in a Bash call only a literal `cd <dir>`/`git -C <dir>` moves it —
+#     `pushd` does not, so a chain using it can end up scanned against the wrong directory (a wrong
+#     guess only weakens the scan, never blocks something real). A PowerShell call is read with
+#     PowerShell's own reader (Parse.commands, a backslash kept): `cd`, `chdir`, `Set-Location`, `sl`,
+#     `Push-Location` and `pushd` with a literal folder (also behind `-Path`/`-LiteralPath`) move it, also out
+#     of a `{ }`, `( )` or `$( )` (PowerShell holds one location per session); `Push-Location`/`pushd` push the
+#     folder they leave and `Pop-Location`/`popd` return to the folder on top of that stack (one stack, a
+#     `-StackName` is not told apart); with an empty stack, or for a folder that is not a plain literal, the
+#     folder stays where it is, and a folder that does not exist is skipped. A folder change inside a handed-on
+#     text (`bash -c`, `cmd /c`, `pwsh -Command`) carries over to the calls behind it, as the location of one
+#     session, though the shell that runs that text keeps its own;
 #   - a word right after a redirection operator (`git commit -m x > log.txt`) is not specially
 #     dropped, so it can end up as an extra, harmless word in that command's argument list;
-#   - the tokenizer is POSIX/Bash-shaped; a PowerShell/cmd-specific construct (backtick escaping, a
-#     cmdlet, `$(...)`) is only approximated, not specially understood — nested-shell unwrapping
-#     (`_nested_command`) covers the common `-c`/`-Command`/`/c` shape only;
+#   - the tokenizer is POSIX/Bash-shaped; a cmd-specific construct is only approximated — nested-shell
+#     unwrapping (`_nested_command`) covers the common `-c`/`-Command`/`/c` shape only. A PowerShell call
+#     whose line PowerShell's own reader tokenizes does not go through it: its calls, those a `bash -c`,
+#     `cmd /c` or `pwsh -Command` text hands on included, come from Parse.commands, and a git call only the
+#     Bash reader would find (a string piped to `powershell -`) is not added; a line that does not tokenize is
+#     read as Bash with the raw-text fallback;
 #   - alias resolution follows exactly one level, ignores a shell alias (`alias.x = !...`), and
 #     substitutes only the resolved subcommand name — an alias's own default arguments (e.g.
 #     `alias.ci = commit -v`) are not merged in, only whatever the caller wrote after the alias;
@@ -209,6 +220,7 @@ from .common import (
     _HOOK_BUDGET, MAX_NESTING, _check_mode, _hook_deadline, _shell_command, _time_limit_note, _time_limit_refusal,
 )
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
+from .powershell_targets import _ps_dir, _PsLocation
 from .shell_targets import (
     _ASSIGNMENT_RE,
     _GIT_GLOBAL_VALUE_FLAGS,
@@ -1388,6 +1400,15 @@ def _in_scope(command: list[str], outer: tuple) -> list[str]:
 
 _TOKENIZE_HERE: object = object()  # "no tokens handed in": None is a valid handed-in result
 
+def _ps_location_resolve(folder: str, cwd: str) -> Optional[str]:
+    """The folder a PowerShell location change leads to from `cwd` (a literal `folder`, already in this platform's
+    form), by the same rule a Bash `cd` follows (_cd_bases: it must exist); None when it is not one folder."""
+    new_bases = _cd_bases(frozenset({cwd}), folder)
+    if len(new_bases) != 1:
+        return None
+    (only,) = new_bases
+    return only
+
 
 def _git_commit_invocations(
     command: str,
@@ -1396,6 +1417,7 @@ def _git_commit_invocations(
     alias_cache: Optional[dict] = None,
     depth: int = 0,
     chain_tokens: object = _TOKENIZE_HERE,
+    parse: Optional[Parse] = None,
 ) -> list[dict]:
     """Every `git commit`/continued-operation call in `command`, in order, read with the word lexer
     (backtick spans included; an exception in it propagates), as {"cwd", "all",
@@ -1417,10 +1439,23 @@ def _git_commit_invocations(
     `chain_tokens` is the result of `Parse.chain_tokens` for the top-level call when the caller
     already has it (the dispatcher's shared parse hands it to the three commit-reading checks; None
     is a result too: the text does not tokenize). Left out, the chain is tokenized here, as are all
-    nested texts. Only this pure reading is shared -- alias lookups and their cache stay per call."""
+    nested texts. Only this pure reading is shared -- alias lookups and their cache stay per call.
+
+    `parse` is the top-level call's Parse. For a PowerShell call whose line PowerShell's own reader tokenizes
+    (`Parse.ps_words()` not empty) the commands come from `Parse.commands()` instead of the word lexer: a path keeps
+    its backslash, a backtick continues the line, a call inside `( )`, `$( )` or `{ }` is a call. `cd`, `Set-Location`,
+    `sl`, `chdir`, `Push-Location` and `pushd` move the folder of the calls behind them (powershell_targets._PsLocation),
+    also out of a block; `Push-Location`/`pushd` first push the folder they leave and `Pop-Location`/`popd` return to the
+    folder on top of that stack; with an empty stack, or for a folder that is not literal, the folder stays where it is,
+    as an unclear `cd` does in Bash. A call without `parse`, one that is not PowerShell and a line that does not
+    tokenize are read as before."""
     if alias_cache is None:
         alias_cache = {}
-    tokens = Parse("Bash", command).chain_tokens() if chain_tokens is _TOKENIZE_HERE else chain_tokens
+    powershell = parse is not None and parse.tool_name == "PowerShell" and bool(parse.ps_words())
+    if powershell:
+        tokens: Optional[list] = []  # not read: the commands come from the PowerShell reading
+    else:
+        tokens = Parse("Bash", command).chain_tokens() if chain_tokens is _TOKENIZE_HERE else chain_tokens
     if tokens is None:
         if _GIT_COMMIT_FALLBACK_RE.search(command):
             return [{"cwd": base_cwd, "all": True, "add_paths": []}]
@@ -1431,8 +1466,13 @@ def _git_commit_invocations(
     pending_all = False
     cwd = base_cwd
     entered: list[tuple[int, str]] = []  # the substitutions the command being read stands in: (scope number, cwd before it)
-    commands = _simple_commands(tokens, command)
-    for words in _with_span_commands(commands, depth):
+    location = _PsLocation(base_cwd)  # the PowerShell location and its stack; cwd follows it in a PowerShell call
+    read_commands: list[list[str]]
+    if powershell and parse is not None:
+        read_commands = parse.commands()
+    else:
+        read_commands = _with_span_commands(_simple_commands(tokens, command), depth)
+    for words in read_commands:
         # A `cd` inside a `$(...)` moves the directory only within it (bash runs it in a subshell): the directory
         # from before the substitution comes back when its commands are done, and a commit inside still sees it.
         scope = getattr(words, "scope", ())
@@ -1440,7 +1480,10 @@ def _git_commit_invocations(
             cwd = entered.pop()[1]
         for number in scope[len(entered):]:
             entered.append((number, cwd))
-        if depth < _MAX_NESTED_DEPTH:
+        # The PowerShell reading already holds the calls a `bash -c`, `cmd /c` or `pwsh -Command` text hands on
+        # (ps_calls), read as the shell that runs them reads them: reading that text again as Bash would only add
+        # a commit at a wrong folder (a path whose backslash the Bash reader drops).
+        if depth < _MAX_NESTED_DEPTH and not powershell:
             nested = _nested_command(words)
             if nested is not None:
                 invocations.extend(
@@ -1454,7 +1497,10 @@ def _git_commit_invocations(
             # (`xcd`), not `cd`; _command_name reads the name with the span cut out and would see
             # `cd`. Only follow a `cd` whose name word carries no span — otherwise leave cwd where it
             # is (the over-inclusive side: a later commit is then scanned at the unchanged directory).
-            if words and _command_name(words[0]) == "cd" and not getattr(words[0], "subs", ()):
+            if powershell:
+                if location.follow(words, _ps_location_resolve, True):
+                    cwd = location.cwd
+            elif words and _command_name(words[0]) == "cd" and not getattr(words[0], "subs", ()):
                 operands, _values = _operands(words[1:])
                 if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
                     new_bases = _cd_bases(frozenset({cwd}), operands[0])
@@ -1466,7 +1512,7 @@ def _git_commit_invocations(
 
         call_cwd = cwd
         if call["directory"] is not None:
-            resolved = _resolve_dir(call["directory"], cwd)
+            resolved = _resolve_dir(_ps_dir(call["directory"]) if powershell else call["directory"], cwd)
             if resolved is not None:
                 call_cwd = resolved
 
@@ -1680,9 +1726,9 @@ def check_secret_scan(payload: dict) -> int:
     timed_out = False
     oversized: list[str] = []
     try:
+        shared = parse_for(payload, command)
         invocations = _git_commit_invocations(
-            command, _base_cwd(payload), deadline, {},
-            chain_tokens=parse_for(payload, command).chain_tokens(),
+            command, _base_cwd(payload), deadline, {}, chain_tokens=shared.chain_tokens(), parse=shared,
         )
         for invocation in invocations:
             if time.monotonic() >= deadline:

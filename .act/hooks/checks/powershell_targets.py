@@ -207,7 +207,8 @@ __all__ = [
     "_ps_split_arguments", "_ps_unquote",
     "_IO_STREAMWRITER_RE", "_PS_IGNORABLE_RE", "_PS_RAW_REDIRECT_RE", "_PS_MAX_SCAN_DEPTH", "_Token",
     "_match_ps_operator", "_consume_here_string", "_ps_tokens", "_uses_invoke_expression",
-    "_ps_command_name", "_ps_split_args", "_target_from_flags", "_target_destination",
+    "_ps_command_name", "_ps_split_args", "_target_from_flags", "_ps_dir", "_ps_location_target", "_PsLocation",
+    "_target_destination",
     "_target_new_item", "_targets_remove", "_cmdlet_targets", "_extract_dash_c",
     "_extract_ps_command_flag", "_ps_word_lists", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
     "_ps_calls", "_ps_git_invocations",
@@ -290,6 +291,7 @@ _CD_ALIASES_FOLLOWED = frozenset({"cd", "set-location", "sl", "push-location"})
 # Windows PowerShell 5.1 aliases of Invoke-WebRequest (`curl.exe` and `wget.exe` are the programs).
 _WEB_ALIASES = frozenset({"curl", "wget"})
 _POP_ALIASES = frozenset({"pop-location", "popd"})
+_PUSH_ALIASES = frozenset({"push-location", "pushd"})
 # The most directories tracked at once (_follow_cd). Every target of a statement is resolved against each of
 # them, so the cap bounds the cost of a long chain of directory changes; past it the followed directory,
 # "unknown" (None), the directories confirmed to exist and the shortest paths stay, the rest is dropped — and
@@ -835,6 +837,77 @@ def _target_from_flags(
         if vals:
             return vals[0]
     return positionals[0] if allow_positional_fallback and positionals else None
+
+
+# A literal folder PowerShell's `cd`-like commands take: word characters, `.`, `/`, `:`, a backslash, a blank and the
+# brackets of a name like `Program Files (x86)`; no `$`, backtick, `{`, `*`, `?`, `[` or leading `~`.
+_PS_DIR_RE = re.compile(r"^[\w./:\\ ()+@,-]+$")
+_PS_DRIVE_ONLY_RE = re.compile(r"^[A-Za-z]:$")  # `Set-Location D:` goes to that drive's own current folder
+
+
+def _ps_dir(raw: str) -> str:
+    """A folder as a PowerShell call wrote it, in the form this platform's path code reads. A backslash separates
+    folders in PowerShell whatever the platform; off Windows it is a name character to the path code, so it is
+    read as `/` there. Unchanged on Windows."""
+    return raw if sys.platform == "win32" else raw.replace("\\", "/")
+
+
+def _ps_location_target(words: list[str]) -> tuple[bool, Optional[str]]:
+    """(whether `words` is a PowerShell command that changes the location, the literal folder it moves to or None).
+    `cd`, `chdir`, `Set-Location`, `sl`, `Push-Location` and `pushd` (any case, `-Path`/`-LiteralPath` or the
+    operand) give their folder; `Pop-Location`/`popd`, `-`/`+`, a bare drive and a folder that is not a plain
+    literal (a variable, a wildcard, `~`, a substitution) give None: the folder is not known. The words are those
+    of Parse.commands() (backslash kept)."""
+    if not words:
+        return False, None
+    name = _ps_command_name(str(words[0]))
+    if name in _POP_ALIASES:
+        return True, None
+    if name not in _CD_ALIASES:
+        return False, None
+    positionals, values = _ps_split_args([str(word) for word in words[1:]])
+    target = _target_from_flags(positionals, values, ("path", "literalpath"))
+    if (
+        not target or target in ("-", "+") or target.startswith("-")
+        or not _PS_DIR_RE.match(target) or _PS_DRIVE_ONLY_RE.match(target)
+    ):
+        return True, None
+    return True, target
+
+
+@dataclass
+class _PsLocation:
+    """The location of a PowerShell session as the calls of one command line move it: the current folder (None: not
+    known) and the location stack. `Push-Location`/`pushd` push the folder they leave and then move like
+    `Set-Location`; `Pop-Location`/`popd` return to the folder on top of the stack. The location and the stack
+    belong to the session, not to the block a command stands in, so a move inside `{ }`, `( )` or `$( )` holds
+    after it: no scoping. A named stack (`-StackName`) is not told apart from the default one."""
+
+    cwd: Optional[str]
+    stack: list[Optional[str]] = field(default_factory=list)
+
+    def follow(
+        self, words: list[str], resolve: Callable[[str, str], Optional[str]], keep_unknown: bool,
+    ) -> bool:
+        """Applies `words` when they change the location and returns whether they did. `resolve(folder, cwd)` gives
+        the folder a literal target leads to (a native path) or None when it cannot be placed. A folder that is not
+        known (a target that is not literal, one `resolve` cannot place, a `Pop-Location` with an empty stack) leaves
+        `cwd` where it is when `keep_unknown` is set, else makes it None."""
+        is_location, target = _ps_location_target(words)
+        if not is_location:
+            return False
+        if _ps_command_name(str(words[0])) in _POP_ALIASES:
+            if self.stack:
+                self.cwd = self.stack.pop()
+            elif not keep_unknown:
+                self.cwd = None
+            return True
+        if _ps_command_name(str(words[0])) in _PUSH_ALIASES:
+            self.stack.append(self.cwd)
+        moved = resolve(_ps_dir(target), self.cwd) if target is not None and self.cwd is not None else None
+        if moved is not None or not keep_unknown:
+            self.cwd = moved
+        return True
 
 
 def _target_destination(positionals: list[str], values: dict[str, list[str]]) -> Optional[str]:

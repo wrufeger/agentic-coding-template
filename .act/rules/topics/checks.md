@@ -473,7 +473,8 @@ subcommand behind it (`git $(…) commit` passes: the check refuses only what th
 on the call itself is refused.
 
 Git in a PowerShell call is read with PowerShell's own reader, not the Bash one, by every check that looks at a git
-call (`worker-git-write`, `git-discard`, `git-metadata-guard`, `commit-pathspec`, `commit-hashes`, the board refresh): a
+call (`worker-git-write`, `git-discard`, `git-metadata-guard`, `commit-pathspec`, `commit-hashes`, the board refresh,
+and the three scans that follow a commit or a merge, `secret-scan`, `danger-scan` and `deps-scan`): a
 backslash stays in a word (`git -C ..\proj commit` names the folder `..\proj`, and `Set-Location ..\proj` is followed
 the same way), a backtick at the end of a line continues the command and a backtick in a word escapes one character
 (``..\p`roj`` is `..\proj`), `--%` is not handed to git and the words behind it are still cut at `;` and `|` (stricter
@@ -486,12 +487,28 @@ PowerShell; `Invoke-Expression`/`iex` read their text the same way; `bash -c '�
 Besides this, every git call the Bash reader finds is kept (a string piped into `powershell -` or `iex`, which the
 PowerShell reading does not read), unless a PowerShell call is the same call: the words are compared with every
 backslash and backtick taken off, and a PowerShell call stands for one Bash call only. So a call the Bash reader saw
-is never lost, and one that both readers see is read as PowerShell reads it. A line that does not tokenize is read by
-the Bash reader alone. Unchanged: a dynamic word in place of the
-subcommand, and `deps-scan`, `secret-scan` and `danger-scan`, which read a PowerShell call as Bash.
+is never lost, and one that both readers see is read as PowerShell reads it; `secret-scan`, `danger-scan` and
+`deps-scan` are the exception (below). A line that does not tokenize is read by
+the Bash reader alone. Unchanged: a dynamic word in place of the subcommand.
 
-Git behind `wsl` (`wsl`/`wsl.exe`, any case, a path in front; Bash and PowerShell) is read by the same checks as a git
-call of its own: `wsl git commit -m x`, `wsl -d Ubuntu -- git …`, `wsl "git commit -m x"`, `wsl bash -c "git commit -m
+`secret-scan`, `danger-scan` (which share one reader of the commits in a call) and `deps-scan` (the note after a
+`git merge`, `pull` or `cherry-pick`) also need the folder a git call runs in, and read it from the PowerShell words:
+`git -C ..\x commit` is the folder `..\x`, and `cd`, `chdir`, `Set-Location`, `sl`, `Push-Location` and `pushd` (any
+case, the folder as the operand or behind `-Path`/`-LiteralPath`, written with `\` or `/`) move the folder of every call
+behind them. PowerShell keeps one location per session, so a move inside `{ }`, `( )` or `$( )` holds after it, and
+so does a folder change inside a handed-on text (`bash -c`, `cmd /c`, `pwsh -Command`): it carries over to the calls
+behind it, though the shell that runs that text keeps its own location (a limit). `Push-Location`/`pushd` push the
+folder they leave and then move like `Set-Location`; `Pop-Location`/`popd` return to the folder on top of that stack
+(one stack: a `-StackName` is not told apart). With an empty stack, and for `-`, a bare drive, a variable, a wildcard
+or `~` as the folder, the commit scans stay where they were (an unclear `cd` reads the same in Bash) and `deps-scan`
+makes the folder unknown (no note, as in Bash). A folder that does not exist is skipped without a word, as before: in
+Bash git refuses it itself. What a `bash -c`, `cmd /c` or `pwsh -Command` text hands on is read once, from the
+PowerShell words, not again as Bash. All three scans read only the PowerShell reading of a line that tokenizes: a git
+call that only the Bash reader finds (see above, a string piped into `powershell -`, `'git pull' | iex`) is not added
+there. A line that does not tokenize is read as Bash, with the raw-text fallback of the commit scans.
+
+Git behind `wsl` (`wsl`/`wsl.exe`, any case, a path in front; Bash and PowerShell) is read by the same checks, except
+`secret-scan`, `danger-scan` and `deps-scan`, as a git call of its own: `wsl git commit -m x`, `wsl -d Ubuntu -- git …`, `wsl "git commit -m x"`, `wsl bash -c "git commit -m
 x"`, `wsl --exec git …`. The options are the ones the outside-root and write checks read (`-d`/`--distribution`,
 `-u`/`--user`, `--cd`, `--shell-type` with a value, `-e`/`--exec`, `--system`, `--` ends them); a management command
 (`wsl --list`, `-l -v`, `--shutdown`) or no word behind the options is no call. Without `--exec` wsl hands the words,

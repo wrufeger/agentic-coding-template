@@ -686,8 +686,9 @@ def check_danger_scan(payload: dict) -> int:
     all_findings: list[dict] = []
     timed_out = False
     try:
+        shared = parse_for(payload, command)
         invocations = _git_commit_invocations(
-            command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+            command, base_cwd, deadline, {}, chain_tokens=shared.chain_tokens(), parse=shared,
         )
     except _GitTimedOut:
         timed_out = True  # a git alias could not be looked up in time: the call may be a commit
