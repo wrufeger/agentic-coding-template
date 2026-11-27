@@ -260,10 +260,17 @@ assignment, `find -exec`, PowerShell pipeline) is refused unless the list names 
 `X=$(...)` or an array `a=($(...))` (an assignment is recognized only as a command of its own, never inside `[[ ...
 ]]` or as an argument) is a list only when a substitution in it lists files. Its pipeline must start with a lister in
 name mode and go on only with `head`, `tail`, `sort`, `uniq` or `grep`. The listers are `find`, `ls`, `fd`, `locate`;
-`git ls-files` without `-s`/`--stage` (git's global options that take a value, `-C`, `-c`, `--git-dir`, `--work-tree`,
-`--namespace`, `--exec-path`, `--config-env` and `--attr-source`, are skipped before the subcommand); `grep`, `rg` and `git grep` with `-l`/`-L` (also in a cluster such as `-rl`),
+`git ls-files` without `-s`/`--stage`; `grep`, `rg` and `git grep` with `-l`/`-L` (also in a cluster such as `-rl`),
 `--files-with-matches`, `--files-without-match`, `--files` or `--name-only`; and `git diff
---name-only`/`--name-status`. The command word is matched whole, so `./find-version.sh` is no `find`. An `ls` whose
+--name-only`/`--name-status`. A git list command is found behind any global option (`-C`, `-c`, `--git-dir`,
+`--work-tree`, `--namespace`, `--exec-path`, `--config-env`, `--attr-source`, `--no-pager` ... are skipped before the
+subcommand), in Bash and in PowerShell (`git -C . ls-files .act | ForEach-Object { Remove-Item $_ }` is a list that
+names `.act`). The folders it names count as shown only when every option in front of it is one that changes neither
+the folder nor what is printed nor how the operands match: `-C .`, `-C ./`, `--no-pager`, `-P`, `--attr-source <tree>`
+and `--attr-source=<tree>`, each word matched on its own; behind any other (`-C sub`, `-c core.worktree=…`,
+`--git-dir`, `--work-tree`, `--*-pathspecs`, `--namespace` ...) the list is not shown and the write is refused, also
+for `git rev-parse`, whose printed folder is read the same way. The command word is matched whole, so
+`./find-version.sh` is no `find`. An `ls` whose
 path operands are all name-only globs that cannot match `.act` (`f=$(ls -t *.log | head -1)`; no `/` or backslash,
 `[!…]` counting as a match) lists names of the current folder and binds nothing, in a scalar and in an array
 assignment; a `for` loop over such a substitution keeps its list. Anything else (`grep -m1 ... | cut`, `ls | wc -l`,
@@ -436,7 +443,9 @@ value, so `git --attr-source commit status` is a `status`. The commands that wor
 `submodule` except bare, `status` and `summary` (`submodule--helper`, git's internal helper, in every form), and `lfs`
 except `ls-files`, `status`, `env`, `version` and `locks` as the very first word after `lfs` (a bare `git lfs` and an
 option before the subcommand, `git lfs -X ls-files pull`, are refused); every program `git-<name>` (also with `.exe`,
-a directory in front, in any case, and in PowerShell behind `&` or a variable assignment) is judged exactly like
+a directory in front, in any case, and in PowerShell as a statement of its own, with or without `&` and a variable
+assignment, also `.\git-lfs.exe` and `& ..\bin\git-lfs.exe`, whose backslash the Bash reader would eat; not seen: such a
+program inside a script block `{ … }` or behind the dot operator, `. .\git-lfs.exe`) is judged exactly like
 `git <name>`, without global options: `git-lfs pull` is `git lfs pull`, `git-commit -m x` is `git commit -m x`,
 `git-receive-pack` is `git receive-pack`, and a `-C` after it is that command's own option, not a folder; programs
 that name no write subcommand (`git-credential-manager`, `git-askpass`, `git-upload-pack`) stay free.

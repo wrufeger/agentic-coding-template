@@ -15,7 +15,9 @@
 #          forms are named, every other form is a write; `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`,
 #          `submodule--helper`, `receive-pack`, `index-pack`, `unpack-objects` (also with `-n`) and `http-fetch` have
 #          no reading form. Every program `git-<name>` (also `git-lfs`) is judged like `git <name>`, without global
-#          options (_git_program_invocations); `update-git-for-windows` changes the Git installation, outside the project
+#          options (_git_program_invocations), in PowerShell also from every statement of its own word lists, which
+#          keep the backslashes the Bash reader drops (`.\git-lfs.exe pull`, `& ..\bin\git-commit.exe`, behind an
+#          assignment); `update-git-for-windows` changes the Git installation, outside the project
 #          and every repository, and is refused in every form, an exemption included. The deny-list
 #          stays: a subcommand this check does not know is free (`upload-pack`, which only reads, is not in it).
 #          Split from checks/git_discard.py: this one asks WHO runs a
@@ -875,8 +877,12 @@ def _git_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
     also with `.exe`, a directory in front, in any case) as (prefix words, argv) like Parse.git_invocations_with_prefix
     gives a git call, with the argv rewritten to `<name> <arguments>`: the program is `git <name>` under another name,
     without the global options a git call takes, so the loop of check_worker_git_write judges it the same way,
-    exemptions included. A call behind a PowerShell variable assignment (`$r = git-lfs pull`), which the Bash reader
-    takes for a command named `$r`, is read from the PowerShell word lists."""
+    exemptions included. In PowerShell every statement of the PowerShell word lists is read too, besides the Bash
+    reading: the Bash reader takes a call behind a variable assignment (`$r = git-lfs pull`) for a command named `$r`
+    and eats the backslash of a path (`.\\git-lfs.exe` becomes `.git-lfs.exe`, `& ..\\bin\\git-lfs.exe pull`); a
+    statement is read as it stands, with a leading call operator `&` removed, or behind its assignment. A call found
+    by both readings is judged twice, which does no harm. Not seen: such a program inside a script block `{ ... }` or
+    behind the dot operator (`. .\\git-lfs.exe`)."""
     found = []
     for words, _ in parse.words():
         stripped = _strip_command_prefix(words)
@@ -885,7 +891,7 @@ def _git_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
             found.append((words[: len(words) - len(stripped)], [name, *stripped[1:]]))
     if parse.tool_name == "PowerShell":
         for words in parse.ps_words():
-            call = _ps_call_behind_assignment(words)
+            call = _ps_call_behind_assignment(words) or (words[1:] if words[0] == "&" and len(words) > 1 else words)
             name = _git_program_name(call[0]) if call else None
             if name:
                 found.append(([], [name, *call[1:]]))

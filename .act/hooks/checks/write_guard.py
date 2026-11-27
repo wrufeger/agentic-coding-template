@@ -27,12 +27,14 @@ from .command_parse import Parse, parse_for
 from .inline_code import WHOLE_FOLDER, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _note_refusal_class
 from .common import _is_unplaced_target, _unplaced_reason
-from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, lists_files, ps_fed_writes, shell_facts
+from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, git_list_invocation, lists_files, ps_fed_writes
+from .list_feeds import shell_facts
 from .powershell_targets import _ps_written_out
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
 from .shell_targets import _ASSIGNMENT_RE, _RESERVED_PREFIXES, _VALUE_FLAGS, _WINDOWS_SWITCH_RE
 from .shell_targets import _command_name, _raw_redirect_targets, _simple_command_targets
 from .shell_targets import _resolve_path
+from .worker_git_write import _parse_git_invocation
 
 __all__ = [
     "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_UNKNOWN_FOLDER_MESSAGE",
@@ -261,9 +263,15 @@ def _listing_operands(words: list[str], first: bool) -> Optional[list[str]]:
     when it is not a command of the allow-list or reads a place it does not name: `grep`/`rg` (a recursive one
     or the first stage needs a path), `find`, `ls`, `git ls-files`, `git grep -- <paths>`; `head`/`tail`/`sort`/
     `uniq` as later stages; `echo`/`printf`, `seq` with numbers only and the commands that print one path
-    (_SINGLE_PATH_COMMANDS) read nothing."""
+    (_SINGLE_PATH_COMMANDS) read nothing. A `git` command is found behind its global options (list_feeds.
+    git_list_invocation) and counts only when every one of them is of the allow-list that changes neither the
+    folder nor what is printed nor how the operands match (`-C .`, `-C ./`, `--no-pager`, `-P`, `--attr-source`);
+    behind any other (`-C sub`, `-c`, `--git-dir`, `--work-tree`, `--*-pathspecs` ...) the answer is None."""
     name = os.path.basename(words[0]).lower().removesuffix(".exe")
     rest = words[1:]
+    git_sub, git_args, git_plain = git_list_invocation(rest) if name == "git" else (None, [], False)
+    if not git_plain:
+        git_sub = None
     if first and name in ("echo", "printf"):
         # Literal words only: no glob, brace, variable, substitution, escape, joining format or `.act` text.
         fmt = rest[0] if rest else ""
@@ -276,7 +284,7 @@ def _listing_operands(words: list[str], first: bool) -> Optional[list[str]]:
                                 or (name == "echo" and word.startswith("-")) for word in texts):
             return None
         return []
-    if first and (name in _SINGLE_PATH_COMMANDS or (name == "git" and rest[:1] == ["rev-parse"])):
+    if first and (name in _SINGLE_PATH_COMMANDS or git_sub == "rev-parse"):
         return []
     if first and name == "seq":  # numbers only: no option (`-f` takes a format), no name
         return [] if all(re.fullmatch(r"\d+(?:\.\d+)?", word) for word in rest) else None
@@ -307,14 +315,14 @@ def _listing_operands(words: list[str], first: bool) -> Optional[list[str]]:
         if any(word.startswith("--") or (word.startswith("-") and re.search("[IwT]", word)) for word in rest):
             return None
         return [word for word in rest if not word.startswith("-")] or None
-    if name == "git" and rest[:1] == ["ls-files"]:
-        plain, after, _ = _split_flags(rest[1:], "xX", _LS_FILES_LONG)
+    if git_sub == "ls-files":
+        plain, after, _ = _split_flags(git_args, "xX", _LS_FILES_LONG)
         return plain + after or None
-    if name == "git" and rest[:1] == ["grep"]:
-        _, after, flags = _split_flags(rest[1:], "efmABC", _GREP_LONG)
+    if git_sub == "grep":
+        _, after, flags = _split_flags(git_args, "efmABC", _GREP_LONG)
         return after if flags & (_NAME_ONLY_FLAGS | {"--name-only"}) and after else None
-    if name == "git" and rest[:1] == ["diff"]:
-        _, after, flags = _split_flags(rest[1:], "", frozenset())
+    if git_sub == "diff":
+        _, after, flags = _split_flags(git_args, "", frozenset())
         named = "--name-only" in flags and not any(flag.startswith("--output") for flag in flags)
         return after if named and after else None
     return None
@@ -451,6 +459,24 @@ def _substitution_texts(command: str) -> Optional[list[str]]:
     return found
 
 
+def _prints_folder(source: str) -> bool:
+    """True when the command text `source` prints a folder: it starts with `pwd`, `dirname` or `git rev-parse`, or
+    its first simple command (read as the scanner reads it, quotes removed) is named `pwd` or `dirname` (directory,
+    `.exe` and case dropped: _command_name) or is `git` whose subcommand, behind any global option, is `rev-parse`
+    (worker_git_write._parse_git_invocation)."""
+    if re.match(r"\s*(?:pwd|dirname|git\s+rev-parse)\b", source):
+        return True
+    words: list[str] = []
+    for text, is_operator in Parse("Bash", source).chain_tokens() or []:
+        if is_operator:
+            break
+        words.append(text)
+    if not words:
+        return False
+    name = _command_name(words[0])
+    return name in ("pwd", "dirname") or (name == "git" and _parse_git_invocation(words[1:])[0] == "rev-parse")
+
+
 def _list_is_shown(raw: str, command: str, base: Optional[str], root: Optional[Path]) -> bool:
     """False when the dynamic write target `raw` is made of a list the scan cannot read - an `xargs` input
     placeholder, or a `$(...)`/backtick span of `command` (the scanner keeps a bare `$` of it) - whose source
@@ -469,9 +495,13 @@ def _list_is_shown(raw: str, command: str, base: Optional[str], root: Optional[P
             return False  # a span that does not end
         sources += found  # none found: the `$` was an arithmetic expansion or a variable, no list
         # The scanner keeps only a bare `$` of an unquoted `$(...)`, so a suffix glued to it (`$(pwd)/.act/y`) is
-        # lost: where the source prints a folder and the command names `.act`, the target may lie in it.
-        if rest == "$" and _PROTECTED_PATH_RE.search(command) and any(
-                re.match(r"\s*(?:pwd|dirname|git\s+rev-parse)\b", source) for source in found):
+        # lost: where the source prints a folder and the command names `.act`, the target may lie in it. The source
+        # prints a folder when it starts with `pwd`, `dirname` or `git rev-parse` (the text), or when its first
+        # simple command is one of them under another spelling (_prints_folder: `git.exe -C . rev-parse`,
+        # `"git" --no-pager rev-parse`, `/usr/bin/git -P rev-parse`, `/bin/pwd`): the allow-list of _listing_operands
+        # shows `git -C . rev-parse`, so this is the check that still refuses it. A `git` command that only
+        # mentions `rev-parse` (`git grep -l rev-parse -- docs`) prints no folder.
+        if rest == "$" and _PROTECTED_PATH_RE.search(command) and any(_prints_folder(source) for source in found):
             return False
     return all(_source_is_shown(source, base, root) for source in sources)
 

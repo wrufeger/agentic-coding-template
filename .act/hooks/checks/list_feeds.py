@@ -17,7 +17,10 @@
 #          command word matched whole (`./find-version.sh` is no `find`): `find`, `ls`, `fd`, `locate`, `git ls-files`
 #          without `-s`/`--stage`, `grep`/`rg`/`git grep` with `-l`, `-L` (also in a cluster such as `-rl`),
 #          `--files-with-matches`, `--files-without-match`, `--files` or `--name-only`, `git diff --name-only` or
-#          `--name-status` - and goes on only with `head`, `tail`, `sort`, `uniq` or `grep` (`LIST=$(grep -rl x .)`,
+#          `--name-status` (a git command behind any global option: git_list_invocation finds the subcommand like
+#          worker_git_write._parse_git_invocation, in Bash and in PowerShell; whether the folders it names are shown
+#          is write_guard._listing_operands' allow-list of options: `-C .`, `-C ./`, `--no-pager`, `-P`,
+#          `--attr-source`) - and goes on only with `head`, `tail`, `sort`, `uniq` or `grep` (`LIST=$(grep -rl x .)`,
 #          `LIST="$(git ls-files | grep x)"`, `a=($(find . -name '*.md'))`); anything else prints text or a single
 #          name (`v=$(grep -m1 ^version f | cut ...)`, `n=$(ls | wc -l)`, `n=$(basename "$f")`) and binds nothing, in a
 #          scalar and in an array assignment alike (the literal words of the array stay as they are); an `ls` whose path
@@ -72,9 +75,11 @@ from .brace_expand import expand_braces
 from .command_parse import Parse
 from .powershell_targets import _ALIASES, _cmdlet_targets, _ps_command_name, _ps_io_write_name, _ps_open_is_read_only
 from .powershell_targets import _ps_split_args, _ps_split_arguments, _ps_tokens, _ps_unquote
-from .shell_targets import _GIT_GLOBAL_VALUE_FLAGS, _SEPARATOR_OPS
+from .shell_targets import _SEPARATOR_OPS
+from .worker_git_write import _parse_git_invocation
 
-__all__ = ["Binding", "ShellFacts", "shell_facts", "find_hits", "FIND_HIT", "PsFed", "ps_fed_writes", "lists_files"]
+__all__ = ["Binding", "ShellFacts", "shell_facts", "find_hits", "FIND_HIT", "PsFed", "ps_fed_writes", "lists_files",
+           "git_list_invocation"]
 
 # The word that stands for a `{}` of `find -exec` when the command it runs is read for its write targets.
 FIND_HIT = "act-find-hit"
@@ -309,7 +314,37 @@ _NAME_ONLY_LONG = frozenset({"--files-with-matches", "--files-without-match", "-
 _NAME_ONLY_CLUSTER_RE = re.compile(r"-[A-Za-z]*[lL][A-Za-z]*")
 _STAGE_CLUSTER_RE = re.compile(r"-[A-Za-z]*s[A-Za-z]*")
 _LATER_STAGES = frozenset({"head", "tail", "sort", "uniq", "grep"})
-_GIT_VALUE_OPTIONS = _GIT_GLOBAL_VALUE_FLAGS | {"-C"}  # git's global options that take the next word, and `-C`
+# The global options of git that change neither the folder a list command reads, nor what it prints, nor how its
+# operands match: `-C .`, `-C ./` (the folder it runs in already), `--no-pager`/`-P`, `--attr-source <tree>` and
+# `--attr-source=<tree>` (where the attributes come from). Any other one (`-C <folder>`, `-c`, `--git-dir`,
+# `--work-tree`, `--namespace`, `--*-pathspecs` ...) may move the list somewhere the operands do not show.
+_GIT_LIST_PLAIN_OPTIONS = frozenset({"--no-pager", "-P"})
+_GIT_LIST_SAME_FOLDER = frozenset({".", "./"})
+
+
+def git_list_invocation(args: list[str]) -> tuple[Optional[str], list[str], bool]:
+    """The subcommand of a `git` call `args` (the words after `git`; found past every global option the way
+    worker_git_write._parse_git_invocation skips them), its own arguments, and whether every option in front of it is
+    of the allow-list that leaves a list command's result as its operands show it (_GIT_LIST_PLAIN_OPTIONS,
+    `-C .`/`-C ./`, `--attr-source <tree>`, `--attr-source=<tree>`; each word matched on its own). (None, [], False)
+    when no subcommand is reached."""
+    sub, sub_args, _dirs, _override, _alias = _parse_git_invocation(args)
+    if sub is None:
+        return None, [], False
+    options = args[: len(args) - len(sub_args) - 1]
+    index = 0
+    while index < len(options):
+        option = options[index]
+        index += 1
+        if option in _GIT_LIST_PLAIN_OPTIONS or option.startswith("--attr-source="):
+            continue
+        if option == "--attr-source" and index < len(options):
+            index += 1
+        elif option == "-C" and index < len(options) and options[index] in _GIT_LIST_SAME_FOLDER:
+            index += 1
+        else:
+            return sub, sub_args, False
+    return sub, sub_args, True
 
 
 def _command_word(word: str) -> str:
@@ -368,12 +403,9 @@ def _is_name_lister(words: list[str]) -> bool:
         return _prints_names_only(words[1:])
     if name != "git":
         return False
-    index = 1
-    while index < len(words) and words[index].startswith("-"):  # global options, some take the next word
-        index += 2 if words[index] in _GIT_VALUE_OPTIONS else 1
-    if index >= len(words):
+    sub, args, _ = git_list_invocation(words[1:])  # a global option in front changes nothing about it being a list
+    if sub is None:
         return False
-    sub, args = words[index], words[index + 1:]
     if sub == "ls-files":
         return not any(arg == "--stage" or (not arg.startswith("--") and _STAGE_CLUSTER_RE.fullmatch(arg)) for arg in args)
     if sub == "grep":
@@ -1128,7 +1160,7 @@ def ps_fed_writes(
         args, _ = _ps_args(pieces, index + 1)
         if name in _PS_LISTERS:
             listers_at.append((index, _ps_lister_operands(args), _ps_name_glob(name, args)))
-        elif name in ("rg", "grep") or (name == "git" and args[:1] in (["ls-files"], ["grep"], ["diff"])):
+        elif name in ("rg", "grep") or (name == "git" and git_list_invocation(args)[0] in ("ls-files", "grep", "diff")):
             listers_at.append((index, native_operands(name, args), False))
     assigned: dict[str, list[tuple[Optional[list[str]], bool]]] = {}
     objects: dict[str, list[str]] = {}  # `$o = [IO.FileInfo]::new(x)`: the argument of the item object a variable holds
