@@ -102,8 +102,12 @@ def check_commit_pathspec(payload: dict) -> int:
         return 0
     _, command = shell
 
-    for args in parse_for(payload, command).git_invocations():
+    parse = parse_for(payload, command)
+    for args in parse.git_invocations():
         subcommand, sub_args, _, _, _ = _parse_git_invocation(args)
+        if parse.tool_name == "PowerShell":
+            # PowerShell keeps the backslash in a word and git for Windows takes it for the slash: `.\` is `./`
+            sub_args = [arg.replace("\\", "/") for arg in sub_args]
         if subcommand in ("add", "stage") and (
             _add_is_catchall(sub_args) or _RAW_TOP_MAGIC_RE.search(command)
         ):

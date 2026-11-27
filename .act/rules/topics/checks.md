@@ -443,10 +443,10 @@ value, so `git --attr-source commit status` is a `status`. The commands that wor
 `submodule` except bare, `status` and `summary` (`submodule--helper`, git's internal helper, in every form), and `lfs`
 except `ls-files`, `status`, `env`, `version` and `locks` as the very first word after `lfs` (a bare `git lfs` and an
 option before the subcommand, `git lfs -X ls-files pull`, are refused); every program `git-<name>` (also with `.exe`,
-a directory in front, in any case, and in PowerShell as a statement of its own, with or without `&` and a variable
-assignment, also `.\git-lfs.exe` and `& ..\bin\git-lfs.exe`, whose backslash the Bash reader would eat; not seen: such a
-program inside a script block `{ … }` or behind the dot operator, `. .\git-lfs.exe`) is judged exactly like
-`git <name>`, without global options: `git-lfs pull` is `git lfs pull`, `git-commit -m x` is `git commit -m x`,
+a directory in front, in any case, and in PowerShell wherever a command can stand, read the way PowerShell reads it
+(see the end of this section): `.\git-lfs.exe`, `& ..\bin\git-lfs.exe`, behind a variable assignment or the dot operator
+(`. .\git-lfs.exe pull`), inside a script block (`ForEach-Object { .\git-lfs.exe pull }`) or a group `( )`, behind
+`cmd /c`) is judged exactly like `git <name>`, without global options: `git-lfs pull` is `git lfs pull`, `git-commit -m x` is `git commit -m x`,
 `git-receive-pack` is `git receive-pack`, and a `-C` after it is that command's own option, not a folder; programs
 that name no write subcommand (`git-credential-manager`, `git-askpass`, `git-upload-pack`) stay free.
 `update-git-for-windows` (as `git update-git-for-windows` or `git-update-git-for-windows`) is refused in every form, a
@@ -460,14 +460,35 @@ resolved the same way; `worktree lock`, `unlock` and `prune` stay exempt. Two mo
 `<worktree>` word of `remove` and the first word of `move` (`git worktree remove <worktree>`, `move <worktree>
 <new-path>`; the second word of `move` is a path) also as the last path components
 of any worktree of the repository (`ghi` names `/abc/def/ghi`), so a bare relative word may reach a worktree inside
-the project: those words keep the exemption only when they are absolute or start with `./` or `../` (a backslash form
-is no anchor: the shell reader consumes the backslash, so write `./`) and lead outside the project; `.` and `..` alone
+the project: those words keep the exemption only when they are absolute or start with `./` or `../` (in PowerShell also
+`.\` and `..\`, which that reading keeps; in Bash a backslash form is no anchor, since the shell consumes the backslash,
+so write `./`) and lead outside the project; `.` and `..` alone
 and every other relative word are refused. And every `worktree repair` is refused there, with or without a path: besides
 the paths named it repairs the `.git` file of every linked worktree, wherever it lies (a probe in a repository of its own
 rewrote the broken file of a third worktree when run for another one), so it also writes into a worktree inside the
 project. `lock`, `unlock`, `prune` and `list` keep the rules above. The check reads the words typed: an alias
 from the repository's or the user's git configuration (`alias.zz = commit`, then `git zz`) is invisible to it, as is a
-variable that expands to an option; only a `-c alias.<name>=…` on the call itself is refused.
+variable that expands to an option, and a dynamic word (`$(…)`, a variable) where the subcommand stands hides the
+subcommand behind it (`git $(…) commit` passes: the check refuses only what the text shows); only a `-c alias.<name>=…`
+on the call itself is refused.
+
+Git in a PowerShell call is read with PowerShell's own reader, not the Bash one, by every check that looks at a git
+call (`worker-git-write`, `git-discard`, `git-metadata-guard`, `commit-pathspec`, `commit-hashes`, the board refresh): a
+backslash stays in a word (`git -C ..\proj commit` names the folder `..\proj`, and `Set-Location ..\proj` is followed
+the same way), a backtick at the end of a line continues the command and a backtick in a word escapes one character
+(``..\p`roj`` is `..\proj`), `--%` is not handed to git and the words behind it are still cut at `;` and `|` (stricter
+than PowerShell), `&` and the dot operator in front of a command are taken off, and a call counts wherever a command
+can stand: at the start, behind `;`, `|`, `&&`, `||`, behind a variable assignment, after `{`, `(`, `$(` and `@(` (a
+group that holds git leaves one dynamic word in the call around it, so `git -C $(Get-Location) commit` is refused like
+any folder that cannot be resolved), and inside the double-quoted text `"$(git commit)"`. `cmd /c`, `cmd /k` and
+`cmd /r` (also `cmd.exe`, any spelling) hand the words behind them on as a call, a single text behind them read as
+PowerShell; `Invoke-Expression`/`iex` read their text the same way; `bash -c '…'` and `find -exec` keep their reading.
+Besides this, every git call the Bash reader finds is kept (a string piped into `powershell -` or `iex`, which the
+PowerShell reading does not read), unless a PowerShell call is the same call: the words are compared with every
+backslash and backtick taken off, and a PowerShell call stands for one Bash call only. So a call the Bash reader saw
+is never lost, and one that both readers see is read as PowerShell reads it. A line that does not tokenize is read by
+the Bash reader alone. Unchanged: `wsl` in front of git is not seen, a dynamic word in place of the
+subcommand, and `deps-scan`, `secret-scan` and `danger-scan`, which read a PowerShell call as Bash.
 
 `worker-run-watch` (`warn` default, `off` skips it, `block` counts as `warn`; it never refuses and never resets)
 reports what a worker's script or program changed, because the other checks read the text of a call and cannot see what

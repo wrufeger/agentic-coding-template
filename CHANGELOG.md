@@ -60,6 +60,9 @@ false alarms and a truer `update.py --plan`.
   `-h` next to other words stay refused.
 
 ### Security
+- Git in a PowerShell call is read with PowerShell's own reader: a backslash path, backtick continuation, `.`, `&`, a
+  script block, a group or `cmd /c` no longer hide a git call from the git checks; `.\` and `..\` anchor
+  `worktree remove`/`move`.
 - The write guard reads a git list source behind `-C .`, `--no-pager`, `-P` or `--attr-source` as without it and
   refuses one behind any other global option, in PowerShell too; `worker-git-write` sees `.\git-lfs.exe pull`.
 - `worker-git-write` refuses `worktree remove <name>` and `move <name> …` from outside unless the word is absolute or

@@ -5,6 +5,17 @@ payload["_act_parse"]. Each accessor calls the existing reader unchanged, the fi
 and with the arguments it is asked with; later asks with the same arguments get a copy of the first
 answer. No parsing logic lives here.
 
+The git calls and the simple commands of a PowerShell call (`git_invocations`, `git_invocations_with_prefix`,
+`commands`, `ps_calls`) are read from the PowerShell word lists (`ps_words`, read once) instead of the Bash reader,
+which drops a backslash, reads a backtick as a command substitution and does not see a call inside `( )` or a script
+block: a path keeps its backslash, a backtick continues the line or escapes one character, `--%` is not handed to git
+(and the text behind it is still cut at `;` and `|`, which is stricter than PowerShell), `cmd /c` and `cmd /k` hand
+the words behind them on as a call, `&` and the dot operator are taken off, and a call stands behind `{`, `(`, `$(`
+and `@(`. The git calls of the Bash reading (`bash_calls_as_written`) come on top unless a PowerShell call is the same
+call (the words compared with every backslash and backtick taken off, each PowerShell call standing for one Bash
+call): they cover what a string hands to `iex` or `powershell -`, which the PowerShell reading does not read; a line
+that does not tokenize falls back to the Bash reader. A Bash call reads as before.
+
 Rules the accessors keep:
   * lazy: a reader runs only when a check asks for its result;
   * memoized per accessor and, for `write_targets`, `bash_write_targets`, `ps_words`, `inline_targets` and
@@ -36,6 +47,17 @@ def _copy_pairs(pairs: list) -> list:
 
 def _copy_lists(lists: list) -> list:
     return [list(words) for words in lists]
+
+
+def _copy_invocations(found: list) -> list:
+    """(prefix words, argv) pairs, both lists copied."""
+    return [(list(prefix), list(args)) for prefix, args in found]
+
+
+def _plain_words(words: list) -> list:
+    """The words with every backslash and backtick taken off: how a call of the PowerShell reading and one of the
+    Bash reading (which drops a backslash and reads a backtick as a substitution) are told to be the same call."""
+    return [str(word).replace("\\", "").replace("`", "") for word in words]
 
 
 def parse_for(payload: dict, command: str) -> "Parse":
@@ -107,17 +129,79 @@ class Parse:
             ("ps_words", depth), lambda: _powershell_targets._ps_word_lists(self._command, depth), _copy_lists)
 
     def git_invocations(self) -> list:
-        """command_words._git_invocations(command)."""
+        """The argv of every git call: command_words._git_invocations(command) for a Bash call; for a PowerShell
+        call the argv of git_invocations_with_prefix."""
+        if self._tool_name == "PowerShell":
+            return self._once(
+                "git_invocations", lambda: [args for _prefix, args in self.git_invocations_with_prefix()],
+                _copy_lists)
         return self._once(
             "git_invocations", lambda: _command_words._git_invocations(self._command), _copy_lists)
 
     def git_invocations_with_prefix(self) -> list:
-        """command_words._git_invocations_with_prefix(command): (prefix words, git argv) pairs, both lists
-        copied."""
+        """(prefix words, git argv) pairs, both lists copied: command_words._git_invocations_with_prefix(command)
+        for a Bash call. For a PowerShell call the git calls of the PowerShell reading (ps_calls): the Bash
+        reader drops a backslash (a path like `..` + backslash + `proj` loses it), reads a backtick as a command
+        substitution and a `(git ...)` or a script block as other words. The git calls of the Bash reading
+        (bash_calls_as_written) come on top unless a PowerShell call is the same call; a line that does not
+        tokenize (ps_words is empty) is read by the Bash reader as before."""
+        if self._tool_name == "PowerShell":
+            return self._once("git_invocations_with_prefix", self._read_powershell_git, _copy_invocations)
         return self._once(
             "git_invocations_with_prefix",
             lambda: _command_words._git_invocations_with_prefix(self._command),
-            lambda found: [(list(prefix), list(args)) for prefix, args in found])
+            _copy_invocations)
+
+    def _read_powershell_git(self) -> list:
+        if not self.ps_words():
+            return _command_words._git_invocations_with_prefix(self._command)
+        found = _powershell_targets._ps_git_invocations(self.ps_calls())
+        uncovered = [_plain_words(args) for _prefix, args in found]
+        for prefix, call in self.bash_calls_as_written():
+            if _shell_targets._command_name(call[0]) != "git":
+                continue
+            plain = _plain_words(call[1:])
+            if plain in uncovered:
+                uncovered.remove(plain)  # a PowerShell call is the same call: it stands for this one, once
+            else:
+                found.append((prefix, call[1:]))
+        return found
+
+    def bash_calls_as_written(self) -> list:
+        """(prefix words, call) pairs of the Bash reading (words) of a PowerShell call, every simple command with its
+        wrappers split off. The Bash reader sees what the PowerShell reader does not: the text a string or here-string
+        hands to `iex` or `powershell -`, a line printed into a shell, a `find -exec`. Its git calls are added to the
+        PowerShell reading of the git calls (git_invocations_with_prefix) unless a PowerShell call is the same call
+        (same words once `\\` and a backtick are taken off, each PowerShell call standing for one); never added to the
+        simple commands (commands) a directory change is read from."""
+        return self._once("bash_calls_as_written", self._read_bash_calls_as_written, _copy_invocations)
+
+    def _read_bash_calls_as_written(self) -> list:
+        found = []
+        for words, _separator in self.words():
+            stripped = _command_words._strip_command_prefix(words)
+            if stripped:
+                found.append((words[:len(words) - len(stripped)], stripped))
+        return found
+
+    def ps_calls(self) -> list:
+        """powershell_targets._ps_calls(ps_words): (prefix words, call) pairs for every call of a PowerShell
+        command in the order they start: the call's command word first, the wrappers in front of it in the prefix;
+        statements, calls inside `( )`, `$( )` and `{ }`, a call behind `&`, `.` or a variable assignment, the
+        command lines of `cmd /c`, `bash -c` and `find -exec`. Meant for a PowerShell call."""
+        return self._once("ps_calls", lambda: _powershell_targets._ps_calls(self.ps_words()), _copy_invocations)
+
+    def commands(self) -> list:
+        """The argv of every simple command, wrappers stripped, in order: stripped() for a Bash call and for a
+        PowerShell line that does not tokenize; for a PowerShell call the calls of ps_calls (a backslash kept)."""
+        if self._tool_name == "PowerShell":
+            return self._once("commands", self._read_powershell_commands, _copy_lists)
+        return self.stripped()
+
+    def _read_powershell_commands(self) -> list:
+        if not self.ps_words():
+            return self.stripped()
+        return [call for _prefix, call in self.ps_calls()]
 
     def assigned_git_invocations(self) -> list:
         """powershell_targets._assigned_git_invocations(ps_words): the git calls behind a PowerShell variable
@@ -125,8 +209,7 @@ class Parse:
         without one. Meant for a PowerShell call: the Bash word reader never sees these calls."""
         return self._once(
             "assigned_git_invocations",
-            lambda: _powershell_targets._assigned_git_invocations(self.ps_words()),
-            lambda found: [(list(prefix), list(args)) for prefix, args in found])
+            lambda: _powershell_targets._assigned_git_invocations(self.ps_words()), _copy_invocations)
 
     def chain_tokens(self) -> Optional[list]:
         """shell_targets._tokenize_chain(command): the token stream of the whole command, or None when

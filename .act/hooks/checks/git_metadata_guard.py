@@ -575,8 +575,9 @@ def _assigned_git_invocations(
 ) -> list[tuple[list[str], list[str]]]:
     """The git calls of a PowerShell `command` that sit behind a variable assignment (`$null = git
     config core.hooksPath x`, `$x = git -c core.fsmonitor=y status`), as (prefix, argv) like
-    `Parse.git_invocations_with_prefix`: the Bash word scanner reads `$x` as the command
-    there and never sees the git call. The assignment is cut off by the helper the write scanner
+    `Parse.git_invocations_with_prefix`. For a PowerShell call that method now reads the calls with
+    PowerShell's own reader and finds these too (the assignment is a command position there); this path stays,
+    and a call found twice does no harm. The assignment is cut off by the helper the write scanner
     uses (powershell_targets._strip_program_assignment), so both read the same forms. `parse` is the
     dispatcher's reading of `command`; without it the command is read here. The PowerShell word lists
     are read only when this is asked, i.e. for a PowerShell call, and a reader error propagates to the

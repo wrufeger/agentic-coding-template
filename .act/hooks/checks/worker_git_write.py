@@ -15,17 +15,19 @@
 #          forms are named, every other form is a write; `fetch`, `clone`, `backfill`, `fetch-pack`, `send-pack`,
 #          `submodule--helper`, `receive-pack`, `index-pack`, `unpack-objects` (also with `-n`) and `http-fetch` have
 #          no reading form. Every program `git-<name>` (also `git-lfs`) is judged like `git <name>`, without global
-#          options (_git_program_invocations), in PowerShell also from every statement of its own word lists, which
-#          keep the backslashes the Bash reader drops (`.\git-lfs.exe pull`, `& ..\bin\git-commit.exe`, behind an
-#          assignment); `update-git-for-windows` changes the Git installation, outside the project
+#          options (_git_program_invocations), in PowerShell read the way PowerShell reads it (Parse.ps_calls: the
+#          backslashes stay, `.\git-lfs.exe pull`, `& ..\bin\git-commit.exe`; behind an assignment or the dot
+#          operator, inside a script block or a group, behind `cmd /c`); `update-git-for-windows` changes the Git installation, outside the project
 #          and every repository, and is refused in every form, an exemption included. The deny-list
 #          stays: a subcommand this check does not know is free (`upload-pack`, which only reads, is not in it).
 #          Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
 #          Command decomposition (finding every `git ...` invocation despite quoting, heredocs,
-#          `bash -c`/`pwsh -c`/`cmd /c`/`eval`/`$(...)`/backticks) is checks/command_words.py's
-#          job, shared with checks/commit_pathspec.py and checks/recursive_delete.py — see that
+#          `bash -c`/`eval`/`$(...)`/backticks in a Bash call) is checks/command_words.py's
+#          job, shared with checks/commit_pathspec.py and checks/recursive_delete.py; in a PowerShell
+#          call the invocations come from PowerShell's own reader (Parse.ps_calls, command_parse.py,
+#          powershell_targets.py: backslash kept, backtick, `.`/`&`, script block, group, `cmd /c`) — see that
 #          module's own header for why the first version of this stage's segmenting (a bare
 #          operator-character regex split) was wrong and got replaced (review, 2026-09-23).
 #
@@ -42,8 +44,9 @@
 #          for the paths of `worktree add` (the first positional only, not the commit-ish), `move` and `remove`
 #          (_worktree_targets). git takes the `<worktree>` word of `remove` and the first word of `move` also as
 #          the last path components of ANY worktree of the repository (`ghi` for `/abc/def/ghi`), so there only a word
-#          that cannot be read that way keeps the exemption: an absolute one, or one that starts with `./` or `../` (a
-#          backslash form is no anchor: the shell reader consumes the backslash), and it must lie outside the project.
+#          that cannot be read that way keeps the exemption: an absolute one, or one that starts with `./` or `../` (in a
+#          PowerShell call also `.\` and `..\`, which that reading keeps; in a Bash call a backslash form is no anchor:
+#          the shell reader consumes the backslash), and it must lie outside the project.
 #          Every `worktree repair` from outside is refused, with or without a path: besides the paths named it repairs
 #          the `.git` file of every linked worktree, wherever it lies, so one inside the project is written too.
 #          A `-C` chain with an absolute value is decided from the last absolute one, whatever folder the call runs in
@@ -61,14 +64,16 @@
 #   - `pushd`, `chdir`, `Set-Location`/`sl`, `Push-Location` count as `cd` for both halves of the
 #     leading-cd exemption (the leading segment itself, and "a later cd-like command disables it
 #     entirely"); `popd`/`Pop-Location` count only for the second half — they change directory
-#     unpredictably, so they can disable the exemption but never grant it.
+#     unpredictably, so they can disable the exemption but never grant it. In a PowerShell call these
+#     are read from the PowerShell words (Parse.commands), so `Set-Location ..\proj` keeps its backslash.
 #   - `git -c alias.<name>=<value> ...` is treated as a write outright, regardless of what
 #     subcommand name follows: an alias can itself resolve to any git subcommand, including a
 #     write one, and this check has no way to look up what the alias actually expands to.
 #
 # Known limits:
-#   - PowerShell quoting is approximated the same way checks/command_words.py's tokenizer
-#     approximates it generally — best effort, see that module's own header.
+#   - a PowerShell call is read with PowerShell's own reader (Parse.ps_calls, powershell_targets.py), which
+#     tokenizes quoting, backtick and `--%` as PowerShell does; a form that reader cannot tokenize falls
+#     back to the Bash reader, and checks/command_words.py's approximation applies there (see its header).
 #   - the outside-project exemption only recognizes a literal `-C <dir>` chain on the git
 #     invocation itself, or a literal `cd <dir>`-family command as the *whole command's own first
 #     simple command* with no later cd-like command anywhere after it
@@ -641,7 +646,7 @@ _TARGET_IN_PROJECT_TEXT = {
                  "end of the path of any worktree) or repairs worktrees (it also rewrites the `.git` file of every "
                  "linked worktree, wherever it lies), although `-C` or `cd` points outside it; give literal paths "
                  "outside the project, and for `remove` and the first word of `move` one that is absolute or starts "
-                 "with `./` or `../`"),
+                 "with `./` or `../` (in PowerShell also `.\\` or `..\\`)"),
 }
 
 
@@ -748,7 +753,8 @@ def _leading_cd_directory(
     commands: list[list[str]], base_cwd: str, parse: Optional[Parse] = None,
 ) -> tuple[bool, Optional[Path]]:
     """How a leading `cd` decides the directory a command runs in, read from `commands` (the
-    prefix-stripped argv of every simple command, in order) -- (determinable, directory).
+    prefix-stripped argv of every simple command, in order; `Parse.commands()`, which for a PowerShell call is read
+    from the PowerShell words, so `Set-Location ..\\proj` keeps its backslash) -- (determinable, directory).
     (True, None): no leading cd (nothing, or a first command that is not cd-like) and no later one.
     (True, path): the first simple command is `cd`-like (_CD_LIKE_NAMES) with a literal operand
     resolving to `path` (against `base_cwd`) and no later simple command changes directory again
@@ -789,7 +795,7 @@ def _leading_cd_run_directory(
         return None
     if parse is None:
         parse = Parse("Bash", command)
-    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd, parse)
+    determinable, directory = _leading_cd_directory(parse.commands(), base_cwd, parse)
     return directory if determinable else None
 
 
@@ -818,7 +824,7 @@ def _leading_cd_unresolvable(command: str, base_cwd: Optional[str], parse: Optio
         return False
     if parse is None:
         parse = Parse("Bash", command)
-    determinable, _ = _leading_cd_directory(parse.stripped(), base_cwd, parse)
+    determinable, _ = _leading_cd_directory(parse.commands(), base_cwd, parse)
     return not determinable
 
 
@@ -844,24 +850,16 @@ def _last_absolute_index(dash_c_dirs: list[str]) -> Optional[int]:
     return found
 
 
-def _is_anchored_path_word(raw: str) -> bool:
+def _is_anchored_path_word(raw: str, powershell: bool = False) -> bool:
     """True when `raw` cannot be read as the last path components of some worktree (git's identification of a
     `<worktree>` word, see `git worktree`): an absolute path (_is_absolute_path_word), or a word that starts with `./`
-    or `../` (PowerShell takes the slash too). A backslash form (dot, backslash) is no anchor: the shell reader this
-    check uses for a git call consumes the backslash, so such a word cannot be told from a name that starts with a
-    dot. Any other relative word, also `.` and `..` alone, is not anchored: it may name a worktree anywhere."""
+    or `../` (PowerShell takes the slash too). In a Bash call a backslash form (dot, backslash) is no anchor: the
+    Bash reader consumes the backslash, so such a word cannot be told from a name that starts with a dot. In a
+    PowerShell call (`powershell`) the word is read with its backslash, and `.\\` and `..\\` anchor like `./` and
+    `../`. Any other relative word, also `.` and `..` alone, is not anchored: it may name a worktree anywhere."""
+    if powershell and raw.startswith((".\\", "..\\")):
+        return True
     return _is_absolute_path_word(raw) or raw.startswith(("./", "../"))
-
-
-def _ps_call_behind_assignment(words: list[str]) -> Optional[list[str]]:
-    """The call of a PowerShell statement `$name = [&] <program> args...` (the program and its arguments), None for a
-    statement of another shape."""
-    if len(words) < 3 or words[1] != "=" or not re.fullmatch(r"\$(?:\w+:)?\w+", words[0]):
-        return None
-    call = words[2:]
-    if call[0] == "&" and len(call) > 1:
-        call = call[1:]
-    return call
 
 
 def _git_program_name(word: str) -> Optional[str]:
@@ -877,24 +875,25 @@ def _git_program_invocations(parse: Parse) -> list[tuple[list[str], list[str]]]:
     also with `.exe`, a directory in front, in any case) as (prefix words, argv) like Parse.git_invocations_with_prefix
     gives a git call, with the argv rewritten to `<name> <arguments>`: the program is `git <name>` under another name,
     without the global options a git call takes, so the loop of check_worker_git_write judges it the same way,
-    exemptions included. In PowerShell every statement of the PowerShell word lists is read too, besides the Bash
-    reading: the Bash reader takes a call behind a variable assignment (`$r = git-lfs pull`) for a command named `$r`
-    and eats the backslash of a path (`.\\git-lfs.exe` becomes `.git-lfs.exe`, `& ..\\bin\\git-lfs.exe pull`); a
-    statement is read as it stands, with a leading call operator `&` removed, or behind its assignment. A call found
-    by both readings is judged twice, which does no harm. Not seen: such a program inside a script block `{ ... }` or
-    behind the dot operator (`. .\\git-lfs.exe`)."""
+    exemptions included. A PowerShell call is read with the PowerShell reader (Parse.ps_calls): the program is seen
+    behind a variable assignment (`$r = git-lfs pull`), `&` or the dot operator (`. .\\git-lfs.exe pull`), inside a
+    script block (`ForEach-Object { .\\git-lfs.exe pull }`) or a group (`(git-lfs pull)`), behind `cmd /c`, and with
+    its backslashes (`.\\git-lfs.exe`, `& ..\\bin\\git-lfs.exe pull`). The calls the Bash reader gives with every word
+    as written in the text (Parse.bash_calls_as_written) come on top; a line that does not tokenize is read by the
+    Bash reader alone."""
+    if parse.tool_name == "PowerShell" and parse.ps_words():
+        calls = parse.ps_calls() + parse.bash_calls_as_written()
+    else:
+        calls = []
+        for words, _ in parse.words():
+            stripped = _strip_command_prefix(words)
+            if stripped:
+                calls.append((words[: len(words) - len(stripped)], stripped))
     found = []
-    for words, _ in parse.words():
-        stripped = _strip_command_prefix(words)
-        name = _git_program_name(stripped[0]) if stripped else None
+    for prefix, call in calls:
+        name = _git_program_name(call[0])
         if name:
-            found.append((words[: len(words) - len(stripped)], [name, *stripped[1:]]))
-    if parse.tool_name == "PowerShell":
-        for words in parse.ps_words():
-            call = _ps_call_behind_assignment(words) or (words[1:] if words[0] == "&" and len(words) > 1 else words)
-            name = _git_program_name(call[0]) if call else None
-            if name:
-                found.append(([], [name, *call[1:]]))
+            found.append((prefix, [name, *call[1:]]))
     return found
 
 
@@ -989,7 +988,9 @@ def _worktree_identifiers(sub_args: list[str]) -> list[str]:
     return targets if subcommand == "remove" else targets[:1] if subcommand == "move" else []
 
 
-def _target_enters_project(subcommand: str, sub_args: list[str], run_dir: Optional[Path], root: Path) -> bool:
+def _target_enters_project(
+    subcommand: str, sub_args: list[str], run_dir: Optional[Path], root: Path, powershell: bool = False,
+) -> bool:
     """True when a `clone`, `init` or `worktree` call that runs from `run_dir` (outside the project) writes into the
     project or somewhere not known to be outside it: a target (_clone_init_targets; for `worktree` the paths of
     _worktree_targets) resolving, against `run_dir`, to a path inside `root`, or one that cannot be resolved (a
@@ -1001,7 +1002,7 @@ def _target_enters_project(subcommand: str, sub_args: list[str], run_dir: Option
     if subcommand == "worktree":
         if _subcommand_after_options(sub_args)[0] == "repair":
             return True
-        if not all(_is_anchored_path_word(raw) for raw in _worktree_identifiers(sub_args)):
+        if not all(_is_anchored_path_word(raw, powershell) for raw in _worktree_identifiers(sub_args)):
             return True
     targets = _worktree_targets(sub_args) if subcommand == "worktree" else _clone_init_targets(subcommand, sub_args)
     for raw in targets:
@@ -1045,9 +1046,7 @@ def check_worker_git_write(payload: dict) -> int:
     leading_cd_directory = _leading_cd_run_directory(command, base_cwd, parse)
     leading_cd_unknown = _leading_cd_unresolvable(command, base_cwd, parse)
 
-    invocations = parse.git_invocations_with_prefix()
-    if parse.tool_name == "PowerShell":
-        invocations += parse.assigned_git_invocations()  # `$r = git commit -m x`: the Bash reader sees `$r`
+    invocations = parse.git_invocations_with_prefix()  # in PowerShell read with PowerShell's own reader
     invocations += _git_program_invocations(parse)  # `git-lfs pull` is `git lfs pull`, `git-commit` is `git commit`
     for prefix, args in invocations:
         subcommand, sub_args, dash_c_dirs, has_dir_override, alias_defined = _parse_git_invocation(args)
@@ -1081,7 +1080,8 @@ def check_worker_git_write(payload: dict) -> int:
             if exempt:
                 # a clone, init or worktree call from outside still writes into the project when its target lies there
                 target_in_project = (subcommand in _TARGET_IN_PROJECT_TEXT and root is not None
-                                     and _target_enters_project(subcommand, sub_args, run_dir, root))
+                                     and _target_enters_project(
+                                         subcommand, sub_args, run_dir, root, parse.tool_name == "PowerShell"))
                 if not target_in_project:
                     continue
 

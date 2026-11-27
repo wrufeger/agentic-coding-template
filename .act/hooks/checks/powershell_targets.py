@@ -172,6 +172,7 @@ from typing import Callable, Iterable, Optional
 from . import inline_code as _inline_code
 from .common import MAX_NESTING, _is_unplaced_target, _unplaced_reason, _unplaced_target  # noqa: F401 - re-exported
 from . import shell_targets as _shell_targets  # the module itself, for the rsync flag it holds while scanning
+from .command_words import _command_word_lists, _strip_command_prefix  # command_words imports no PowerShell reader
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
@@ -207,6 +208,7 @@ __all__ = [
     "_ps_command_name", "_ps_split_args", "_target_from_flags", "_target_destination",
     "_target_new_item", "_targets_remove", "_cmdlet_targets", "_extract_dash_c",
     "_extract_ps_command_flag", "_ps_word_lists", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
+    "_ps_calls", "_ps_git_invocations",
     "_broad_guard_candidates", "_resolve_ps_target", "_resolve_ps_targets", "_resolve_cd_target",
     "_join_directory", "_directory_exists", "_place_key", "_TrackedDirs", "_follow_cd", "_flush_ps_statement",
     "_scan_ps_tokens", "_ps_raw_redirect_targets", "_powershell_write_targets",
@@ -1170,6 +1172,229 @@ def _assigned_git_invocations(word_lists: list[list[str]]) -> list[tuple[list[st
         stripped, _ = _strip_program_assignment(call)
         if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
             found.append(([], stripped[1:]))
+    return found
+
+
+# The calls of a PowerShell command, as the readers of a git call need them (_ps_calls, _ps_git_invocations). A word
+# list of _ps_word_lists is one statement; a call starts where a command name can stand: the first word, a word behind
+# `&` or the dot operator, behind a variable assignment, and the first word inside `( )`, `$( )`, `@( )` and `{ }`.
+_PS_TYPED_VARIABLE_RE = re.compile(r"^(?:\[[\w.,\[\] ]+\])*\$(?:\w+:)?\w+$")
+_PS_GROUP_HOLDERS = {"{": "{...}"}  # the word a closed group leaves in the call around it; any other opener: `$(...)`
+_PS_CMD_FLAGS = frozenset({"/c", "/k", "/r", "-c", "-k"})
+_PS_POSIX_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_PS_SHELL_COMMAND_FLAG_RE = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
+_PS_FIND_EXEC_FLAGS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_PS_CALL_DEPTH = 4  # nested command lines (`cmd /c "..."`, `$(...)` in a string, `-exec`) read before giving up
+
+
+def _ps_dequote(piece: str) -> str:
+    """`piece` of a word as written, read the way the tokenizer reads a word (quotes and escapes removed)."""
+    if not any(char in piece for char in "`'\"‘’‚‛“”„"):
+        return piece
+    tokens = _ps_tokens(piece)
+    if tokens and len(tokens) == 1 and not tokens[0][1]:
+        return str(tokens[0][0])
+    return piece
+
+
+def _ps_word_pieces(word: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """(the pieces of `word`, the texts of the `$( )` sub-expressions inside its double-quoted spans). A piece is
+    ("word"|"open"|"close", text): the word is cut at every bracket that is written unquoted and not escaped by a
+    backtick (`$(`, `@(`, `(`, `{` open, `)` and `}` close); a bracket in quotes stays in its word. The pieces after
+    the first one follow the one before with no space. A word read from a text without its raw form
+    (`_RawWord.raw`) is cut by its own text, which can only read more brackets."""
+    raw = getattr(word, "raw", None)
+    if raw is None:
+        raw = str(word)
+    if not any(char in raw for char in "(){}"):
+        return [("word", str(word))], []
+    pieces: list[tuple[str, str]] = []
+    subs: list[str] = []
+    buf: list[str] = []
+
+    def flush() -> None:
+        if buf:
+            pieces.append(("word", _ps_dequote("".join(buf))))
+            buf.clear()
+
+    i, n = 0, len(raw)
+    while i < n:
+        char = raw[i]
+        if char == "`" and i + 1 < n:
+            buf.append(raw[i:i + 2])
+            i += 2
+        elif char in _PS_SINGLE_QUOTES:
+            j = i + 1
+            while j < n and raw[j] not in _PS_SINGLE_QUOTES:
+                j += 1
+            buf.append(raw[i:j + 1])
+            i = j + 1
+        elif char in _PS_DOUBLE_QUOTES:
+            j = i + 1
+            while j < n and raw[j] not in _PS_DOUBLE_QUOTES:
+                if raw[j] == "`":
+                    j += 1
+                elif raw.startswith("$(", j):
+                    depth, end = 1, j + 2
+                    while end < n and depth:
+                        depth += (raw[end] == "(") - (raw[end] == ")")
+                        end += 1
+                    subs.append(raw[j + 2:end - 1 if depth == 0 else end])
+                    j = end - 1
+                j += 1
+            buf.append(raw[i:j + 1])
+            i = j + 1
+        elif raw.startswith(("$(", "@("), i):
+            flush()
+            pieces.append(("open", raw[i:i + 2]))
+            i += 2
+        elif char in "({":
+            flush()
+            pieces.append(("open", char))
+            i += 1
+        elif char in ")}":
+            flush()
+            pieces.append(("close", char))
+            i += 1
+        else:
+            buf.append(char)
+            i += 1
+    flush()
+    return pieces, subs
+
+
+def _ps_statement_calls(words: list[str]) -> tuple[list[list[str]], list[str]]:
+    """(the calls inside one statement `words`, in the order they start; the texts of the sub-expressions inside its
+    double-quoted spans). Each group (`( )`, `$( )`, `@( )`, `{ }`) is a call of its own; it leaves one dynamic word
+    (`$(...)`, `{...}`) in the call around it, glued to the word it touches, so `-C $(Get-Location).Path` stays one
+    value. A closer with no opener is ignored, a group that does not close ends with the statement."""
+    root: list[str] = []
+    calls = [root]
+    stack: list[tuple[list[str], str, bool]] = [(root, "", False)]
+    texts: list[str] = []
+    for word in words:
+        pieces, subs = _ps_word_pieces(word)
+        texts.extend(subs)
+        for position, (kind, text) in enumerate(pieces):
+            frame = stack[-1][0]
+            if kind == "word":
+                if position and frame:
+                    frame[-1] += text
+                else:
+                    frame.append(text)
+            elif kind == "open":
+                child: list[str] = []
+                calls.append(child)
+                stack.append((child, text, position > 0))
+            elif len(stack) > 1:
+                _, opener, glued = stack.pop()
+                parent = stack[-1][0]
+                if parent:
+                    holder = _PS_GROUP_HOLDERS.get(opener, "$(...)")
+                    if glued:
+                        parent[-1] += holder
+                    else:
+                        parent.append(holder)
+    return [call for call in calls if call], texts
+
+
+def _ps_trim_head(call: list[str]) -> list[str]:
+    """`call` without what stands before the command word: `$name =`/`$name +=` (also typed), the call operator `&`
+    and the dot operator `.` (alone or glued to the word, `&git`)."""
+    while call:
+        if len(call) >= 3 and call[1] in ("=", "+=") and _PS_TYPED_VARIABLE_RE.match(call[0]):
+            call = call[2:]
+        elif call[0] in ("&", "."):
+            call = call[1:]
+        elif len(call[0]) > 1 and call[0][0] == "&" and not call[0][1:].isdigit():
+            call = [call[0][1:], *call[1:]]
+        else:
+            break
+    return call
+
+
+def _ps_collect_call(call: list[str], depth: int, found: list[tuple[list[str], list[str]]], lead: list[str]) -> None:
+    """Adds (prefix words, the call from its command word on) for `call` to `found`, and for the commands it hands a
+    command line to: `cmd /c`, `/k`, `/r` (the words behind the flag, or the one text read as PowerShell, a backslash
+    kept), `sh`/`bash`/`zsh`/`dash`/`ksh -c <text>` (read as Bash text, which it is) and the tail of a `find -exec`
+    (`-execdir`, `-ok`, `-okdir`)."""
+    prefix = list(lead)
+    while call:
+        trimmed = _ps_trim_head(call)
+        stripped = _strip_command_prefix(trimmed)
+        prefix += trimmed[:len(trimmed) - len(stripped)]
+        progress = len(stripped) != len(call)
+        call = stripped
+        if not progress:
+            break
+    if not call or depth > _PS_CALL_DEPTH:
+        return
+    found.append((prefix, call))
+    name = _ps_command_name(call[0])
+    if name == "cmd":
+        index = next((at for at, word in enumerate(call) if at and word.lower() in _PS_CMD_FLAGS), None)
+        if index is not None and index + 1 < len(call):
+            rest = call[index + 1:]
+            if len(rest) == 1:
+                for words in _ps_word_lists(rest[0], 1):
+                    for inner in _ps_statement_calls(words)[0]:
+                        _ps_collect_call(inner, depth + 1, found, prefix + call[:index + 1])
+            else:
+                _ps_collect_call(rest, depth + 1, found, prefix + call[:index + 1])
+    elif name in _IEX_WORDS:
+        for word in call[1:]:
+            if not word.startswith("-"):
+                for words in _ps_word_lists(word, 1):
+                    for inner in _ps_statement_calls(words)[0]:
+                        _ps_collect_call(inner, depth + 1, found, [])
+    elif name in _PS_POSIX_SHELLS:
+        for at, word in enumerate(call[1:-1], 1):
+            if _PS_SHELL_COMMAND_FLAG_RE.match(word):
+                for words, _separator in _command_word_lists(call[at + 1]):
+                    inner = _strip_command_prefix(words)
+                    if inner:
+                        found.append((words[:len(words) - len(inner)], inner))
+                break
+    for at, word in enumerate(call):
+        if word in _PS_FIND_EXEC_FLAGS:
+            tail: list[str] = []
+            for after in call[at + 1:]:
+                if after in (";", "\\;", "+"):
+                    break
+                tail.append(after)
+            _ps_collect_call(tail, depth + 1, found, [])
+
+
+def _ps_calls(word_lists: list[list[str]], depth: int = 0) -> list[tuple[list[str], list[str]]]:
+    """Every call of a PowerShell command as (prefix words, the call from its command word on), in the order they
+    start, read from its word lists (_ps_word_lists): the statements and the calls inside their groups and script
+    blocks, a variable assignment, `&` and `.` taken off, the prefix words (`env`, `xargs`, ...) split off
+    (command_words._strip_command_prefix) and the command lines handed on (_ps_collect_call, a `$( )` inside a
+    double-quoted string). The PowerShell reader keeps a backslash and reads a backtick as the escape it is."""
+    found: list[tuple[list[str], list[str]]] = []
+    for words in word_lists:
+        calls, texts = _ps_statement_calls(words)
+        for call in calls:
+            _ps_collect_call(call, depth, found, [])
+        if depth < _PS_CALL_DEPTH:
+            for text in texts:
+                found.extend(_ps_calls(_ps_word_lists(text, 1), depth + 1))
+    return found
+
+
+def _ps_git_invocations(calls: list[tuple[list[str], list[str]]]) -> list[tuple[list[str], list[str]]]:
+    """The git calls among `calls` (_ps_calls) as (prefix, git's argv) like Parse.git_invocations_with_prefix: git's
+    own name dropped, and the stop-parsing word `--%` too (PowerShell does not hand it to the program)."""
+    found: list[tuple[list[str], list[str]]] = []
+    for prefix, call in calls:
+        if _ps_command_name(call[0]) != "git":
+            continue
+        argv = list(call[1:])
+        for index, word in enumerate(argv):
+            if getattr(word, "raw", word) == "--%":
+                del argv[index]
+                break
+        found.append((list(prefix), argv))
     return found
 
 

@@ -239,7 +239,8 @@ def _alias_expansion(
 
 def _prefix_changes_directory(prefix: list[str]) -> bool:
     """True if a wrapper ahead of `git` in the same simple command (`prefix`: the unstripped words
-    `Parse.git_invocations_with_prefix` hands back) runs it in a directory of its own
+    `Parse.git_invocations_with_prefix` hands back; for a PowerShell call read with PowerShell's own reader, so
+    a backslash in a word stays) runs it in a directory of its own
     choosing rather than the shell's current one -- `env -C <dir>`/`env --chdir[=]<dir> git ...`.
     Which directory is knowable in principle but not followed here (the same answer
     shell_targets.py gives for its write targets); the caller refuses the call as "not
@@ -296,7 +297,7 @@ def _resolve_cwd_after_leading_cd(
         return None, True
     if parse is None:
         parse = Parse("Bash", command)
-    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd, parse if group_scoped else None)
+    determinable, directory = _leading_cd_directory(parse.commands(), base_cwd, parse if group_scoped else None)
     if not determinable:
         return None, False
     return (base_cwd if directory is None else str(directory)), True
